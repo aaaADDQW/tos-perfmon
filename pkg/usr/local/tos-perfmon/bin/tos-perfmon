@@ -1,0 +1,820 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+TOS PerfMon — 性能监测服务
+
+架构（TOS 规范 · WebUI 内部打开 / iframe 模式）:
+    前端 (webui)  --HTTP-->  TOS 平台代理  --Unix Socket-->  本服务
+                              /v2/proxy/tos-perfmon/...
+
+关键实现点:
+    1. 监听 Unix Socket: /var/api/tos-perfmon.sock  (权限 0660)
+    2. 平台代理路径固定为 /v2/proxy/tos-perfmon/<api>
+    3. 鉴权: 校验请求头 X-Csrf-Token 与 Cookie 中的值一致
+    4. CORS 预检: 允许 TOS Web 来源
+"""
+
+import json
+import os
+import re
+import socket
+import socketserver
+import sys
+import threading
+import time
+from datetime import datetime
+from http.server import BaseHTTPRequestHandler
+from urllib.parse import urlparse, parse_qs
+
+# ---------- 常量 ----------
+APP_ID = 'tos-perfmon'
+SOCK_PATH = '/var/api/%s.sock' % APP_ID
+DATA_DIR = '/var/lib/%s' % APP_ID
+LOG_DIR = '/var/log/%s' % APP_ID
+API_PREFIX = '/v2/proxy/%s' % APP_ID
+
+DATA_FILE = os.path.join(DATA_DIR, 'samples.jsonl')
+REPORT_FILE = os.path.join(DATA_DIR, 'report.json')
+CONFIG_FILE = os.path.join(DATA_DIR, 'config.json')
+
+DEFAULT_CONFIG = {
+    'interval': 10,          # 采样间隔（秒）
+    'retention_hours': 72,   # 数据保留（小时）
+    'max_samples': 20000,    # 最大样本数
+    'thresholds': {
+        'rss_slope_warn': 10.0,
+        'rss_slope_critical': 60.0,
+        'fd_slope_warn': 10.0,
+        'fd_slope_critical': 60.0,
+        'thread_slope_warn': 5.0,
+        'thread_slope_critical': 30.0,
+    }
+}
+
+_state = {
+    'collector_running': False,
+    'collector_start': None,
+    'samples': 0,
+    'last_sample_time': None,
+    'error': None,
+}
+_lock = threading.Lock()
+
+
+def log(msg):
+    try:
+        os.makedirs(LOG_DIR, exist_ok=True)
+        line = '[%s] %s\n' % (datetime.now().strftime('%Y-%m-%d %H:%M:%S'), msg)
+        with open(os.path.join(LOG_DIR, 'service.log'), 'a', encoding='utf-8') as f:
+            f.write(line)
+    except Exception:
+        pass
+
+
+# ---------- /proc 采集（内嵌，避免多文件依赖） ----------
+
+def read_file(path, default=None):
+    try:
+        with open(path, 'r', encoding='utf-8', errors='replace') as f:
+            return f.read()
+    except Exception:
+        return default
+
+
+def collect_mem():
+    d = {}
+    txt = read_file('/proc/meminfo')
+    if not txt:
+        return d
+    for line in txt.splitlines():
+        if ':' not in line:
+            continue
+        k, v = line.split(':', 1)
+        try:
+            d[k] = int(v.strip().split()[0])
+        except (ValueError, IndexError):
+            continue
+    total = d.get('MemTotal', 0)
+    avail = d.get('MemAvailable', 0)
+    free = d.get('MemFree', 0)
+    buf = d.get('Buffers', 0)
+    cached = d.get('Cached', 0)
+    sw_total = d.get('SwapTotal', 0)
+    sw_free = d.get('SwapFree', 0)
+    used = total - avail
+    return {
+        'mem_total_kb': total,
+        'mem_available_kb': avail,
+        'mem_used_kb': used,
+        'mem_used_pct': round(used / total * 100, 2) if total else 0,
+        'mem_used_naive_kb': total - free - buf - cached,
+        'swap_used_kb': sw_total - sw_free,
+        'slab_kb': d.get('Slab', 0),
+        'sunreclaim_kb': d.get('SUnreclaim', 0),
+        'sreclaimable_kb': d.get('SReclaimable', 0),
+        'kernel_stack_kb': d.get('KernelStack', 0),
+    }
+
+
+def collect_cpu():
+    txt = read_file('/proc/stat')
+    if not txt:
+        return {}
+    p = txt.splitlines()[0].split()
+    if not p or p[0] != 'cpu':
+        return {}
+    v = [int(x) for x in p[1:11]]
+    while len(v) < 10:
+        v.append(0)
+    user, nice, system, idle, iowait, irq, softirq, steal = v[:8]
+    total = user + nice + system + idle + iowait + irq + softirq + steal
+    return {'cpu_total': total, 'cpu_busy': total - idle - iowait}
+
+
+def collect_load():
+    p = read_file('/proc/loadavg', '').split()
+    if len(p) >= 4:
+        r = p[3].split('/')
+        return {'load1': float(p[0]), 'load5': float(p[1]), 'load15': float(p[2]),
+                'procs_running': int(r[0]) if r else 0,
+                'procs_total': int(r[1]) if len(r) > 1 else 0}
+    return {}
+
+
+def collect_thermal():
+    out = {}
+    base = '/sys/class/thermal'
+    if not os.path.isdir(base):
+        return out
+    for name in sorted(os.listdir(base)):
+        if not name.startswith('thermal_zone'):
+            continue
+        t = read_file(os.path.join(base, name, 'temp'))
+        typ = read_file(os.path.join(base, name, 'type'))
+        if t and typ:
+            try:
+                out['temp_' + typ.strip().replace(' ', '_')] = round(int(t.strip()) / 1000.0, 1)
+            except ValueError:
+                pass
+    return out
+
+
+def collect_process(pid, page_size):
+    base = '/proc/%d' % pid
+    stat = read_file(os.path.join(base, 'stat'))
+    if not stat:
+        return None
+    rp = stat.rfind(')')
+    if rp < 0:
+        return None
+    comm = stat[stat.find('(') + 1:rp]
+    rest = stat[rp + 2:].split()
+    try:
+        utime = int(rest[11])
+        stime = int(rest[12])
+        rss_pages = int(rest[21])
+    except (IndexError, ValueError):
+        return None
+
+    # status 中的细节
+    status = read_file(os.path.join(base, 'status'), '')
+    st = {}
+    for line in status.splitlines():
+        if ':' in line:
+            k, v = line.split(':', 1)
+            st[k.strip()] = v.strip()
+
+    def kb(key):
+        try:
+            return int(st.get(key, '').split()[0])
+        except (ValueError, IndexError):
+            return 0
+
+    fd_count = fd_socket = 0
+    try:
+        fddir = os.path.join(base, 'fd')
+        fds = os.listdir(fddir)
+        fd_count = len(fds)
+        for fd in fds[:500]:
+            try:
+                if os.readlink(os.path.join(fddir, fd)).startswith('socket:'):
+                    fd_socket += 1
+            except OSError:
+                pass
+    except OSError:
+        pass
+
+    threads = 0
+    try:
+        threads = len(os.listdir(os.path.join(base, 'task')))
+    except OSError:
+        pass
+
+    exe = ''
+    try:
+        exe = os.readlink(os.path.join(base, 'exe'))
+    except OSError:
+        pass
+
+    return {
+        'pid': pid, 'comm': comm, 'exe': exe,
+        'rss_kb': rss_pages * page_size // 1024,
+        'rss_anon_kb': kb('RssAnon'),
+        'rss_file_kb': kb('RssFile'),
+        'fd_count': fd_count, 'fd_socket': fd_socket,
+        'threads': threads,
+        'cpu_ticks': utime + stime,
+    }
+
+
+def take_sample(prev_cpu):
+    now = time.time()
+    cpu = collect_cpu()
+    cpu_pct = None
+    if prev_cpu and prev_cpu.get('cpu_total'):
+        dt = cpu.get('cpu_total', 0) - prev_cpu['cpu_total']
+        db = cpu.get('cpu_busy', 0) - prev_cpu['cpu_busy']
+        if dt > 0:
+            cpu_pct = round(db / dt * 100, 2)
+
+    page_size = os.sysconf('SC_PAGE_SIZE')
+    procs = []
+    for name in os.listdir('/proc'):
+        if name.isdigit():
+            info = collect_process(int(name), page_size)
+            if info:
+                procs.append(info)
+
+    s = {
+        'ts': now,
+        'time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        'cpu_pct': cpu_pct,
+        'processes': procs,
+    }
+    s.update(collect_mem())
+    s.update(collect_load())
+    s.update(collect_thermal())
+    return s, cpu
+
+
+# ---------- 采集线程 ----------
+
+def collector_loop(get_config):
+    global _state
+    prev_cpu = None
+    log('采集线程启动')
+    while True:
+        try:
+            cfg = get_config()
+            if not _state.get('collector_running'):
+                log('采集线程退出')
+                return
+
+            sample, prev_cpu = take_sample(prev_cpu)
+
+            with _lock:
+                os.makedirs(DATA_DIR, exist_ok=True)
+                with open(DATA_FILE, 'a', encoding='utf-8') as f:
+                    f.write(json.dumps(sample, ensure_ascii=False) + '\n')
+                _state['samples'] += 1
+                _state['last_sample_time'] = sample['time']
+
+                # 数据保留策略：超限则重写文件
+                if _state['samples'] > cfg.get('max_samples', 20000):
+                    _trim_data(cfg)
+
+            time.sleep(cfg.get('interval', 10))
+        except Exception as e:
+            log('采集异常: %s' % e)
+            with _lock:
+                _state['error'] = str(e)
+            time.sleep(5)
+
+
+def _trim_data(cfg):
+    """裁剪数据文件，保留最近 N 条"""
+    try:
+        keep = cfg.get('max_samples', 20000) // 2
+        with open(DATA_FILE, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+        with open(DATA_FILE, 'w', encoding='utf-8') as f:
+            f.writelines(lines[-keep:])
+        _state['samples'] = keep
+        log('数据裁剪完成，保留 %d 条' % keep)
+    except Exception as e:
+        log('数据裁剪失败: %s' % e)
+
+
+_COLLECTOR_THREAD = None
+
+
+def start_collector(get_config):
+    global _COLLECTOR_THREAD
+    with _lock:
+        if _state['collector_running']:
+            return False
+        _state['collector_running'] = True
+        _state['collector_start'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        _state['error'] = None
+    _COLLECTOR_THREAD = threading.Thread(target=collector_loop, args=(get_config,), daemon=True)
+    _COLLECTOR_THREAD.start()
+    return True
+
+
+def stop_collector():
+    with _lock:
+        _state['collector_running'] = False
+    return True
+
+
+# ---------- 配置 ----------
+
+def load_config():
+    try:
+        if os.path.exists(CONFIG_FILE):
+            with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+                cfg = json.load(f)
+            merged = dict(DEFAULT_CONFIG)
+            merged.update(cfg)
+            return merged
+    except Exception as e:
+        log('读取配置失败: %s' % e)
+    return dict(DEFAULT_CONFIG)
+
+
+def save_config(cfg):
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+            json.dump(cfg, f, ensure_ascii=False, indent=2)
+        return True
+    except Exception as e:
+        log('保存配置失败: %s' % e)
+        return False
+
+
+# ---------- 分析（内嵌） ----------
+
+def linear_slope(xs, ys):
+    n = len(xs)
+    if n < 2:
+        return 0.0
+    mx = sum(xs) / n
+    my = sum(ys) / n
+    num = sum((x - mx) * (y - my) for x, y in zip(xs, ys))
+    den = sum((x - mx) ** 2 for x in xs)
+    return num / den if den else 0.0
+
+
+def monotonic_ratio(vals):
+    if len(vals) < 2:
+        return 0.0
+    inc = dec = 0
+    for i in range(1, len(vals)):
+        if vals[i] > vals[i - 1]:
+            inc += 1
+        elif vals[i] < vals[i - 1]:
+            dec += 1
+    t = inc + dec
+    return inc / t if t else 0.0
+
+
+def build_report(cfg):
+    """读取样本，生成分析报告"""
+    if not os.path.exists(DATA_FILE):
+        return {'error': '暂无采集数据'}
+
+    samples = []
+    try:
+        with open(DATA_FILE, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    try:
+                        samples.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        pass
+    except Exception as e:
+        return {'error': '读取数据失败: %s' % e}
+
+    if len(samples) < 3:
+        return {'error': '样本不足（当前 %d 个，至少需要 3 个）' % len(samples)}
+
+    th = cfg.get('thresholds', DEFAULT_CONFIG['thresholds'])
+    t0 = samples[0]['ts']
+    duration = samples[-1]['ts'] - t0
+
+    # 按 PID 聚合
+    series_map = {}
+    for s in samples:
+        for p in s.get('processes', []):
+            series_map.setdefault(p['pid'], []).append({
+                'ts': s['ts'],
+                'rss_kb': p['rss_kb'],
+                'rss_anon_kb': p.get('rss_anon_kb', 0),
+                'fd_count': p['fd_count'],
+                'fd_socket': p.get('fd_socket', 0),
+                'threads': p['threads'],
+                'cpu_ticks': p['cpu_ticks'],
+                'comm': p['comm'],
+                'exe': p.get('exe', ''),
+            })
+
+    results = []
+    min_samples = max(3, min(10, len(samples) // 3))
+    for pid, series in series_map.items():
+        if len(series) < min_samples:
+            continue
+        xs = [(x['ts'] - t0) / 60.0 for x in series]
+        rss = [x['rss_kb'] for x in series]
+        anon = [x['rss_anon_kb'] for x in series]
+        fds = [x['fd_count'] for x in series]
+        socks = [x['fd_socket'] for x in series]
+        ths = [x['threads'] for x in series]
+        cts = [x['cpu_ticks'] for x in series]
+
+        rss_slope = linear_slope(xs, rss)
+        anon_slope = linear_slope(xs, anon)
+        fd_slope = linear_slope(xs, fds)
+        sock_slope = linear_slope(xs, socks)
+        th_slope = linear_slope(xs, ths)
+        rss_mono = monotonic_ratio(rss)
+        fd_per_hour = fd_slope * 60
+        th_per_hour = th_slope * 60
+        cpu_active = (cts[-1] - cts[0]) / duration if duration > 0 else 0
+
+        verdict = 'ok'
+        reasons = []
+        score = 0
+
+        if abs(rss_slope) >= th['rss_slope_critical']:
+            verdict, score = 'leak', score + 3
+            reasons.append('RSS斜率 %.1f KB/min 超临界值' % rss_slope)
+        elif abs(rss_slope) >= th['rss_slope_warn']:
+            verdict, score = ('suspect' if verdict == 'ok' else verdict), score + 2
+            reasons.append('RSS斜率 %.1f KB/min 超警戒值' % rss_slope)
+
+        if rss_slope > 0:
+            if rss_mono >= 0.9:
+                verdict, score = 'leak', score + 2
+                reasons.append('RSS单调递增 %.0f%%（典型泄漏特征）' % (rss_mono * 100))
+            elif rss_mono >= 0.75:
+                verdict = 'suspect' if verdict == 'ok' else verdict
+                score += 1
+                reasons.append('RSS递增占比 %.0f%%' % (rss_mono * 100))
+
+        if fd_per_hour >= th['fd_slope_critical']:
+            verdict, score = 'leak', score + 3
+            reasons.append('句柄增长 %.0f 个/小时 超临界值' % fd_per_hour)
+        elif fd_per_hour >= th['fd_slope_warn']:
+            verdict = 'suspect' if verdict == 'ok' else verdict
+            score += 2
+            reasons.append('句柄增长 %.0f 个/小时' % fd_per_hour)
+
+        if th_per_hour >= th['thread_slope_critical']:
+            verdict, score = 'leak', score + 2
+            reasons.append('线程增长 %.0f 个/小时' % th_per_hour)
+        elif th_per_hour >= th['thread_slope_warn']:
+            verdict = 'suspect' if verdict == 'ok' else verdict
+            score += 1
+            reasons.append('线程增长 %.0f 个/小时' % th_per_hour)
+
+        if rss and rss[0] > 100 * 1024 and cpu_active < 0.05 and rss_slope > 0:
+            score += 1
+            reasons.append('高内存(%.0fMB)但CPU活跃度极低' % (rss[0] / 1024))
+
+        leak_type = ''
+        if verdict != 'ok':
+            if anon_slope > rss_slope * 0.6 and rss_slope > 0:
+                leak_type = 'heap'
+            elif sock_slope > 0.5:
+                leak_type = 'socket'
+            elif fd_slope > 0.5:
+                leak_type = 'fd'
+            else:
+                leak_type = 'mixed'
+
+        results.append({
+            'pid': pid, 'comm': series[0]['comm'], 'exe': series[0]['exe'],
+            'samples': len(series),
+            'rss_start_kb': rss[0], 'rss_end_kb': rss[-1],
+            'rss_min_kb': min(rss), 'rss_max_kb': max(rss),
+            'rss_growth_kb': rss[-1] - rss[0],
+            'rss_slope_kb_min': round(rss_slope, 2),
+            'rss_slope_kb_hour': round(rss_slope * 60, 1),
+            'rss_slope_kb_day': round(rss_slope * 1440, 1),
+            'rss_monotonic': round(rss_mono, 3),
+            'fd_start': fds[0], 'fd_end': fds[-1],
+            'fd_growth': fds[-1] - fds[0],
+            'fd_slope_per_hour': round(fd_per_hour, 1),
+            'fd_socket_end': socks[-1],
+            'fd_socket_slope_per_hour': round(sock_slope * 60, 1),
+            'threads_start': ths[0], 'threads_end': ths[-1],
+            'threads_slope_per_hour': round(th_per_hour, 1),
+            'cpu_active_tps': round(cpu_active, 4),
+            'verdict': verdict, 'leak_type': leak_type,
+            'score': score, 'reasons': reasons,
+        })
+
+    leaks = sorted([r for r in results if r['verdict'] == 'leak'], key=lambda x: -x['score'])
+    suspects = sorted([r for r in results if r['verdict'] == 'suspect'], key=lambda x: -x['score'])
+
+    # 系统趋势
+    trend = {
+        'time': [s['time'] for s in samples],
+        'ts': [s['ts'] for s in samples],
+        'mem_used_pct': [s.get('mem_used_pct', 0) for s in samples],
+        'mem_used_kb': [s.get('mem_used_kb', 0) for s in samples],
+        'sunreclaim_kb': [s.get('sunreclaim_kb', 0) for s in samples],
+        'slab_kb': [s.get('slab_kb', 0) for s in samples],
+        'swap_used_kb': [s.get('swap_used_kb', 0) for s in samples],
+        'load1': [s.get('load1', 0) for s in samples],
+        'cpu_pct': [s.get('cpu_pct') or 0 for s in samples],
+        'procs': [len(s.get('processes', [])) for s in samples],
+        'mem_total_kb': samples[-1].get('mem_total_kb', 0),
+    }
+
+    sys_slope = linear_slope([(t - t0) / 60.0 for t in trend['ts']], trend['mem_used_kb'])
+    slab_slope = linear_slope([(t - t0) / 60.0 for t in trend['ts']], trend['sunreclaim_kb'])
+
+    # Top 排行
+    top_mem = sorted(results, key=lambda x: -x['rss_end_kb'])[:20]
+    top_growth = sorted(results, key=lambda x: -x['rss_slope_kb_hour'])[:20]
+
+    report = {
+        'meta': {
+            'samples': len(samples),
+            'duration_s': round(duration, 1),
+            'duration_h': round(duration / 3600, 2),
+            'start': samples[0]['time'],
+            'end': samples[-1]['time'],
+            'processes_tracked': len(results),
+            'report_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'interval': cfg.get('interval', 10),
+        },
+        'system': {
+            'mem_slope_kb_min': round(sys_slope, 2),
+            'mem_slope_kb_hour': round(sys_slope * 60, 1),
+            'mem_slope_kb_day': round(sys_slope * 1440, 1),
+            'slab_slope_kb_min': round(slab_slope, 2),
+            'mem_start_pct': trend['mem_used_pct'][0] if trend['mem_used_pct'] else 0,
+            'mem_end_pct': trend['mem_used_pct'][-1] if trend['mem_used_pct'] else 0,
+            'mem_total_kb': trend['mem_total_kb'],
+            'cpu_avg': round(sum(trend['cpu_pct']) / len(trend['cpu_pct']), 2) if trend['cpu_pct'] else 0,
+            'verdict': ('leak' if abs(sys_slope) >= th['rss_slope_critical']
+                        else 'suspect' if abs(sys_slope) >= th['rss_slope_warn'] else 'ok'),
+        },
+        'summary': {
+            'leak_count': len(leaks),
+            'suspect_count': len(suspects),
+            'ok_count': len(results) - len(leaks) - len(suspects),
+        },
+        'leaks': leaks,
+        'suspects': suspects,
+        'top_memory': top_mem,
+        'top_growth': top_growth,
+        'all': results,
+        'trend': trend,
+        'thresholds': th,
+    }
+    return report
+
+
+# ---------- HTTP 处理 ----------
+
+class Handler(BaseHTTPRequestHandler):
+    protocol_version = 'HTTP/1.1'
+    server_version = 'TOSPerfMon/1.0'
+
+    def log_message(self, fmt, *args):
+        pass  # 静默，避免刷日志
+
+    # --- 鉴权 ---
+    def _auth_ok(self):
+        """
+        TOS 平台要求:
+          校验 X-Csrf-Token 请求头 与 Cookie 中的 X-Csrf-Token 一致
+        """
+        csrf = self.headers.get('X-Csrf-Token', '')
+        cookie = self.headers.get('Cookie', '')
+        if not csrf:
+            return False
+        # 从 Cookie 中解析 X-Csrf-Token
+        for part in cookie.split(';'):
+            if '=' in part:
+                k, v = part.strip().split('=', 1)
+                if k.strip() == 'X-Csrf-Token':
+                    return v.strip() == csrf
+        # 若 Cookie 里没有，只要有 csrf 头也放行（兼容）
+        return True
+
+    # --- CORS ---
+    def _cors(self):
+        origin = self.headers.get('Origin', '')
+        if origin:
+            self.send_header('Access-Control-Allow-Origin', origin)
+            self.send_header('Access-Control-Allow-Credentials', 'true')
+        self.send_header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type, X-Csrf-Token, Cookie')
+
+    def _json(self, obj, code=200):
+        body = json.dumps(obj, ensure_ascii=False).encode('utf-8')
+        self.send_response(code)
+        self.send_header('Content-Type', 'application/json; charset=utf-8')
+        self.send_header('Content-Length', str(len(body)))
+        self.send_header('Cache-Control', 'no-store')
+        self._cors()
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _file(self, path, ctype):
+        try:
+            with open(path, 'rb') as f:
+                body = f.read()
+            self.send_response(200)
+            self.send_header('Content-Type', ctype)
+            self.send_header('Content-Length', str(len(body)))
+            self.send_header('Cache-Control', 'no-store')
+            self._cors()
+            self.end_headers()
+            self.wfile.write(body)
+        except Exception:
+            self._json({'error': 'not found'}, 404)
+
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self._cors()
+        self.send_header('Content-Length', '0')
+        self.end_headers()
+
+    def do_GET(self):
+        parsed = urlparse(self.path)
+        path = parsed.path
+        qs = parse_qs(parsed.query)
+
+        # 去掉平台代理前缀
+        if path.startswith(API_PREFIX):
+            path = path[len(API_PREFIX):] or '/'
+
+        # --- 静态资源（WebUI）---
+        if path.startswith('/static/') or path == '/' or path == '/index.html':
+            pkg_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            rel = 'index.html' if path in ('/', '/index.html') else path[len('/static/'):]
+            fp = os.path.join(pkg_dir, 'webui', rel)
+            if not os.path.exists(fp):
+                fp = os.path.join(pkg_dir, 'webui', 'index.html')
+            ctype = 'text/html; charset=utf-8'
+            if fp.endswith('.js'):
+                ctype = 'application/javascript; charset=utf-8'
+            elif fp.endswith('.css'):
+                ctype = 'text/css; charset=utf-8'
+            elif fp.endswith('.svg'):
+                ctype = 'image/svg+xml'
+            return self._file(fp, ctype)
+
+        # --- API（需要鉴权）---
+        if not self._auth_ok():
+            return self._json({'error': 'unauthorized'}, 401)
+
+        if path == '/api/status':
+            with _lock:
+                st = dict(_state)
+            st['config'] = load_config()
+            st['data_size'] = os.path.getsize(DATA_FILE) if os.path.exists(DATA_FILE) else 0
+            return self._json(st)
+
+        if path == '/api/start':
+            ok = start_collector(load_config)
+            with _lock:
+                st = dict(_state)
+            return self._json({'ok': ok, 'state': st})
+
+        if path == '/api/stop':
+            stop_collector()
+            return self._json({'ok': True})
+
+        if path == '/api/report':
+            cfg = load_config()
+            return self._json(build_report(cfg))
+
+        if path == '/api/config':
+            return self._json(load_config())
+
+        if path == '/api/samples':
+            # 返回原始样本（可选限量）
+            limit = int(qs.get('limit', ['0'])[0])
+            out = []
+            try:
+                with open(DATA_FILE, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        line = line.strip()
+                        if line:
+                            try:
+                                out.append(json.loads(line))
+                            except json.JSONDecodeError:
+                                pass
+            except Exception:
+                pass
+            if limit > 0:
+                out = out[-limit:]
+            return self._json({'count': len(out), 'samples': out})
+
+        if path == '/api/clear':
+            stop_collector()
+            try:
+                if os.path.exists(DATA_FILE):
+                    os.remove(DATA_FILE)
+            except Exception:
+                pass
+            with _lock:
+                _state['samples'] = 0
+                _state['last_sample_time'] = None
+                _state['collector_start'] = None
+            return self._json({'ok': True})
+
+        return self._json({'error': 'not found', 'path': path}, 404)
+
+    def do_POST(self):
+        parsed = urlparse(self.path)
+        path = parsed.path
+        if path.startswith(API_PREFIX):
+            path = path[len(API_PREFIX):] or '/'
+
+        if not self._auth_ok():
+            return self._json({'error': 'unauthorized'}, 401)
+
+        n = int(self.headers.get('Content-Length', 0))
+        body = self.rfile.read(n) if n else b'{}'
+        try:
+            data = json.loads(body.decode('utf-8')) if body else {}
+        except Exception:
+            data = {}
+
+        if path == '/api/config':
+            cfg = load_config()
+            cfg.update(data)
+            save_config(cfg)
+            return self._json({'ok': True, 'config': cfg})
+
+        if path == '/api/start':
+            ok = start_collector(load_config)
+            return self._json({'ok': ok})
+
+        if path == '/api/stop':
+            stop_collector()
+            return self._json({'ok': True})
+
+        return self._json({'error': 'not found'}, 404)
+
+
+class UnixHTTPServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
+    daemon_threads = True
+    allow_reuse_address = True
+
+
+def main():
+    # 准备目录
+    for d in (DATA_DIR, LOG_DIR, '/var/api'):
+        try:
+            os.makedirs(d, exist_ok=True)
+        except Exception as e:
+            log('创建目录失败 %s: %s' % (d, e))
+
+    # 清理旧 socket
+    if os.path.exists(SOCK_PATH):
+        try:
+            os.remove(SOCK_PATH)
+        except Exception:
+            pass
+
+    # 启动采集
+    start_collector(load_config)
+
+    # 启动 HTTP over Unix Socket
+    srv = UnixHTTPServer(SOCK_PATH, Handler)
+    os.chmod(SOCK_PATH, 0o660)
+
+    # 尝试设置 socket 属主（需要 root，失败不致命）
+    try:
+        import pwd
+        uid = pwd.getpwnam(APP_ID).pw_uid
+        gid = pwd.getpwnam(APP_ID).pw_gid
+        os.chown(SOCK_PATH, uid, gid)
+    except Exception:
+        pass
+
+    log('服务启动，监听 %s' % SOCK_PATH)
+    try:
+        srv.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        stop_collector()
+        srv.server_close()
+        if os.path.exists(SOCK_PATH):
+            os.remove(SOCK_PATH)
+        log('服务停止')
+
+
+if __name__ == '__main__':
+    main()

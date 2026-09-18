@@ -1,0 +1,14 @@
+#!/bin/bash
+set -e
+
+APPID=tos-perfmon
+
+# 停止并禁用服务
+systemctl stop $APPID.service 2>/dev/null || true
+systemctl disable $APPID.service 2>/dev/null || true
+
+# 清理残留进程
+pkill -u $APPID 2>/dev/null || true
+sleep 1
+
+exit 0

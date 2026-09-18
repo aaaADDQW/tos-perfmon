@@ -1,0 +1,18 @@
+[Unit]
+Description=TOS Performance Monitor - /proc based memory leak detector
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/tos-perfmon/bin/tos-perfmon
+WorkingDirectory=/usr/local/tos-perfmon
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=30
+TimeoutStopSec=10
+LimitNOFILE=65536
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

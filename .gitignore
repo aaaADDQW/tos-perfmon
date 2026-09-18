@@ -1,0 +1,29 @@
+# 构建产物
+*.deb
+*.tar.gz
+*.zip
+pkg/usr/local/tos-perfmon/webui.bz2
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# 编辑器
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 系统
+.DS_Store
+Thumbs.db
+
+# 运行时数据
+*.jsonl
+samples.jsonl
+report.json
+service.log

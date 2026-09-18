@@ -1,0 +1,14 @@
+{
+  "en-us": {
+    "app_name": "Performance Monitor",
+    "app_desc": "System and per-process performance monitoring with memory leak detection"
+  },
+  "zh-cn": {
+    "app_name": "性能监测",
+    "app_desc": "系统与进程级性能监测，自动识别内存泄漏"
+  },
+  "zh-hk": {
+    "app_name": "效能監測",
+    "app_desc": "系統與行程級效能監測，自動識別記憶體洩漏"
+  }
+}

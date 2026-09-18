@@ -1,0 +1,18 @@
+Package: tos-perfmon
+Version: 1.0.0
+Architecture: amd64
+Section: utils
+Priority: optional
+Maintainer: QA Team <qa@example.com>
+Depends: python3 (>= 3.10), systemd
+Description: TOS Performance Monitor
+ A performance monitoring application for TOS 7 that collects
+ system and per-process metrics directly from /proc, detects
+ memory leaks using slope analysis and monotonicity testing,
+ and presents results in an interactive dashboard.
+ .
+ Features:
+  - Per-process RSS, anonymous memory, file descriptors, threads
+  - System-wide memory, slab, load, CPU, temperature
+  - Automatic leak detection with configurable thresholds
+  - Time-series trend visualization

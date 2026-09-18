@@ -1,0 +1,11 @@
+#!/bin/bash
+set -e
+
+# 创建数据目录
+mkdir -p /var/lib/tos-perfmon
+mkdir -p /var/log/tos-perfmon
+mkdir -p /var/api
+
+# 平台会在安装时自动创建应用用户，这里不创建
+
+exit 0

@@ -1,0 +1,20 @@
+#!/bin/bash
+set -e
+
+APPID=tos-perfmon
+
+systemctl daemon-reload 2>/dev/null || true
+rm -f /etc/systemd/system/$APPID.service 2>/dev/null || true
+rm -f /var/api/$APPID.sock 2>/dev/null || true
+
+if [ "$1" = "purge" ]; then
+    if id -u $APPID > /dev/null 2>&1; then
+        userdel $APPID 2>/dev/null || true
+    fi
+    rm -rf /var/lib/$APPID
+    rm -rf /var/log/$APPID
+fi
+
+systemctl daemon-reload 2>/dev/null || true
+
+exit 0

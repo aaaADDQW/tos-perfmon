@@ -1,0 +1,39 @@
+#!/bin/bash
+set -e
+
+APPID=tos-perfmon
+
+# 设置可执行权限
+chmod 755 /usr/local/$APPID/bin/$APPID || true
+chmod 644 /usr/local/$APPID/config.ini || true
+chmod 644 /usr/local/$APPID/$APPID.lang || true
+chmod 644 /usr/local/$APPID/images/icons/$APPID.svg || true
+
+# 安装 systemd 服务
+if [ -f /usr/local/$APPID/init.d/$APPID.service ]; then
+    cp -f /usr/local/$APPID/init.d/$APPID.service /etc/systemd/system/$APPID.service
+    chmod 644 /etc/systemd/system/$APPID.service
+fi
+
+# 创建数据目录
+mkdir -p /var/lib/$APPID /var/log/$APPID
+
+# 先解压 WebUI
+if [ -f /usr/local/$APPID/webui.bz2 ]; then
+    cd /usr/local/$APPID
+    tar -xjf webui.bz2 2>/dev/null || true
+    rm -f webui.bz2
+fi
+
+# 统一设置属主（放在解压之后，确保所有文件都被覆盖）
+if id -u $APPID > /dev/null 2>&1; then
+    chown -R $APPID:$APPID /var/lib/$APPID 2>/dev/null || true
+    chown -R $APPID:$APPID /var/log/$APPID 2>/dev/null || true
+    chown -R $APPID:$APPID /usr/local/$APPID 2>/dev/null || true
+fi
+
+systemctl daemon-reload 2>/dev/null || true
+systemctl enable $APPID.service 2>/dev/null || true
+systemctl start $APPID.service 2>/dev/null || true
+
+exit 0
