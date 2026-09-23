@@ -3,6 +3,14 @@ set -e
 
 APPID=tos-perfmon
 
+# 移除 nginx 反向代理配置
+if [ -f /etc/nginx/conf.d/$APPID-app.conf ]; then
+    rm -f /etc/nginx/conf.d/$APPID-app.conf
+    if nginx -t > /dev/null 2>&1; then
+        systemctl restart nginx 2>/dev/null || systemctl reload nginx 2>/dev/null || true
+    fi
+fi
+
 # 停止并禁用服务
 systemctl stop $APPID.service 2>/dev/null || true
 systemctl disable $APPID.service 2>/dev/null || true

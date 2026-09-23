@@ -12,7 +12,9 @@ cd "$(dirname "$0")"
 APP_ID="tos-perfmon"
 VERSION=$(python3 -c "import json;print(json.load(open('pkg/usr/local/$APP_ID/config.ini'))['version'])" 2>/dev/null || echo "1.0.0")
 PLATFORM="x86_64"
-DEB_NAME="${APP_ID}_${PLATFORM}.deb"
+# 官方规范: 单包模式文件名为 <appid>_<version>_<arch>.deb
+# 例: myapp_1.0.0_amd64.deb  (arch 用 amd64，不是 x86_64)
+DEB_NAME="${APP_ID}_${VERSION}_amd64.deb"
 
 echo "=========================================="
 echo " 构建 $APP_ID v$VERSION ($PLATFORM)"
@@ -33,8 +35,14 @@ rm -rf "$APP_DIR/webui"
 # --- 2. 打包 WebUI ---
 echo "[2/6] 打包 WebUI → webui.bz2"
 if [ -d "webui" ]; then
-    tar -cjf "$APP_DIR/webui.bz2" -C webui .
+    # ⚠️ 必须保留 webui/ 这一层目录，解压后为 <app>/webui/index.html。
+    # 平台按 /usr/local/<app_id>/webui/ 定位前端入口；若把内容铺到应用根目录
+    # (<app>/index.html)，平台找不到前端，会回退加载默认平台页面，
+    # 表现为桌面上多开一个"套娃"的管理平台窗口。
+    # 对照平台应用：MultimediaServer/docker/calendar 均为 <app>/webui/index.html
+    tar -cjf "$APP_DIR/webui.bz2" webui
     echo "      $(du -h "$APP_DIR/webui.bz2" | cut -f1) webui.bz2"
+    echo "      内容: $(tar -tjf "$APP_DIR/webui.bz2" | head -3 | tr '\n' ' ')"
 else
     echo "      ⚠ 未找到 webui/ 目录"
 fi
@@ -58,11 +66,19 @@ except Exception as e:
     print('      ❌ config.ini 不是合法 JSON: %s' % e); sys.exit(1)
 
 errs = []
-# 必填字段
-for k in ['id','icon','version','category','platform','application_type','system_id','package','exec','recommend','beta','low_version']:
+# 官方必填字段（见 config.ini 文档字段参考表）
+REQUIRED = ['id','icon','exec','version','category','platform',
+            'application_type','system_id','package','publisher']
+for k in REQUIRED:
     if k not in cfg:
         errs.append('缺少必填字段: %s' % k)
-# 一致性
+
+# id 字符集：小写字母开头，仅 a-z0-9-
+import re as _re
+if not _re.fullmatch(r'[a-z][a-z0-9-]{0,49}', str(cfg.get('id',''))):
+    errs.append('id 必须小写字母开头、仅含 a-z0-9-、最长 50: %r' % cfg.get('id'))
+
+# 一致性（目录结构文档"强制对应关系"）
 if cfg.get('id') != app_id:
     errs.append('id(%s) != 应用目录名(%s)' % (cfg.get('id'), app_id))
 if cfg.get('package') != app_id:
@@ -71,13 +87,43 @@ if cfg.get('system_id') != app_id:
     errs.append('system_id(%s) != %s' % (cfg.get('system_id'), app_id))
 if cfg.get('version') != version:
     errs.append('config.ini version(%s) != DEBIAN/control version(%s)' % (cfg.get('version'), version))
-# 互斥字段
-if 'type' in cfg and 'open_path' in cfg:
-    errs.append('type 与 open_path 互斥，不能同时出现')
-if cfg.get('type') == 'iframe' and cfg.get('path') != '/%s/' % app_id:
-    errs.append('iframe 模式 path 必须为 /%s/' % app_id)
 if cfg.get('icon') != '/images/icons/%s.svg' % app_id:
     errs.append('icon 路径必须为 /images/icons/%s.svg' % app_id)
+
+# 互斥：iframe 模式禁止 open_path；外部打开必须有 open_path 且禁止 type
+if 'type' in cfg and 'open_path' in cfg:
+    errs.append('type 与 open_path 互斥，不能同时出现')
+if cfg.get('exec') is True and not cfg.get('path'):
+    errs.append('exec=true 时 path 必填')
+if cfg.get('type') == 'iframe' and cfg.get('path') != '/%s/' % app_id:
+    errs.append('iframe 模式 path 必须为 /%s/，当前 %r' % (app_id, cfg.get('path')))
+
+# 外部打开必须自带 nginx 反向代理配置
+if cfg.get('open_path') is True:
+    import os as _os
+    nf = _os.path.join(_os.path.dirname(cfg_path), 'nginx', '%s.conf' % app_id)
+    if not _os.path.isfile(nf):
+        errs.append('open_path=true 必须提供 nginx/%s.conf' % app_id)
+
+# low_version 必须 TOS7.0 及以上
+lv = str(cfg.get('low_version',''))
+if lv and not _re.fullmatch(r'TOS\d+\.\d+', lv):
+    errs.append('low_version 必须形如 "TOS7.0"，当前 %r' % lv)
+
+# 分类最多 3 个
+if len(cfg.get('category') or []) > 3:
+    errs.append('category 最多 3 个，当前 %d 个' % len(cfg.get('category')))
+
+# 类型检查
+if cfg.get('relation') is not None and not isinstance(cfg.get('relation'), list):
+    errs.append('relation 必须是数组，当前 %s' % type(cfg.get('relation')).__name__)
+
+# 保留字段
+RESERVED = ['host_network','container_runtime','sandbox','auto_update',
+            'upstream_url','license','min_memory','min_cpu','min_disk']
+for k in RESERVED:
+    if k in cfg:
+        errs.append('使用了保留字段: %s' % k)
 
 if errs:
     print('      ❌ 校验失败:')
@@ -99,7 +145,19 @@ echo "      ✅ 权限已设置"
 # --- 6. 构建 deb ---
 echo "[6/6] 构建 deb 包"
 rm -f "$DEB_NAME"
-dpkg-deb --build "$PKG" "$DEB_NAME" 2>&1 | sed 's/^/      /'
+
+# ⚠️ 必须显式指定 gzip。
+# Ubuntu 22.04 的 dpkg-deb 默认用 zstd (data.tar.zst)，而 TOS 应用中心的
+# Go 解析器 (ParseDebFromStream) 只支持 gzip/xz，不认 zstd，会直接抛
+# "file not found in deb" → 前端显示 "应用包解析失败"。
+dpkg-deb -Z gzip --build "$PKG" "$DEB_NAME" 2>&1 | sed 's/^/      /'
+
+# 校验压缩格式
+COMP=$(ar t "$DEB_NAME" | grep -E '^data\.tar' || true)
+case "$COMP" in
+    data.tar.gz) echo "      ✅ 压缩格式: gzip ($COMP)" ;;
+    *) echo "      ❌ 压缩格式错误: $COMP (必须为 data.tar.gz)"; exit 1 ;;
+esac
 
 echo ""
 echo "=========================================="

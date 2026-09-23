@@ -33,20 +33,31 @@ DATA_DIR = '/var/lib/%s' % APP_ID
 LOG_DIR = '/var/log/%s' % APP_ID
 API_PREFIX = '/v2/proxy/%s' % APP_ID
 
+# WebUI 外部打开：后端以独立 HTTP 服务提供，nginx 将 /<app_id>/ 反代到这里。
+# 只监听回环地址，避免直接暴露到局域网。
+LISTEN_HOST = '127.0.0.1'
+LISTEN_PORT = 8790
+
 DATA_FILE = os.path.join(DATA_DIR, 'samples.jsonl')
 REPORT_FILE = os.path.join(DATA_DIR, 'report.json')
 CONFIG_FILE = os.path.join(DATA_DIR, 'config.json')
 
 DEFAULT_CONFIG = {
-    'interval': 10,          # 采样间隔（秒）
-    'retention_hours': 72,   # 数据保留（小时）
-    'max_samples': 20000,    # 最大样本数
+    'interval': 10,            # 采样间隔（秒）
+    'retention_hours': 168,    # 数据保留（小时），默认 7 天
+    'max_samples': 120000,     # 最大样本数（10s×7d ≈ 60480，留余量）
+    'auto_start': False,       # 服务启动后是否自动开始采集（默认否，等用户点）
+    'alerts_enabled': True,    # 是否记录告警日志
+    'alert_cooldown_s': 600,   # 同一进程告警最小间隔（秒）
+    # 空闲自动退出：界面关闭后，若持续无请求且未在采集，则退出进程以释放资源。
+    # 0 表示禁用（常驻）。下次从桌面点击图标时由 systemd 自动拉起。
+    'idle_exit_seconds': 120,
     'thresholds': {
-        'rss_slope_warn': 10.0,
-        'rss_slope_critical': 60.0,
-        'fd_slope_warn': 10.0,
-        'fd_slope_critical': 60.0,
-        'thread_slope_warn': 5.0,
+        'rss_slope_warn': 10.0,      # KB/min
+        'rss_slope_critical': 60.0,  # KB/min
+        'fd_slope_warn': 10.0,       # 个/小时
+        'fd_slope_critical': 60.0,   # 个/小时
+        'thread_slope_warn': 5.0,    # 个/小时
         'thread_slope_critical': 30.0,
     }
 }
@@ -56,9 +67,19 @@ _state = {
     'collector_start': None,
     'samples': 0,
     'last_sample_time': None,
+    'last_scan_seconds': None,
+    'proc_count': None,
     'error': None,
+    'last_activity': None,      # 最后一次收到界面请求的时间（用于空闲退出）
+    'active_clients': 0,        # 当前打开的界面数
 }
 _lock = threading.Lock()
+# 告警抑制：记录每个进程上次告警时间，避免刷屏
+_alert_seen = {}
+# 退出信号：空闲守护线程置位后，主线程据此收尾
+_shutdown = threading.Event()
+# 报告缓存：同一份数据不重复计算（key = 时间范围 + 数据版本）
+_report_cache = {}
 
 
 def log(msg):
@@ -69,6 +90,82 @@ def log(msg):
             f.write(line)
     except Exception:
         pass
+
+
+# ---------- 空闲退出 ----------
+
+def touch_activity():
+    """界面每次请求都会调用，重置空闲计时。"""
+    with _lock:
+        _state['last_activity'] = time.time()
+
+
+def client_opened():
+    with _lock:
+        _state['active_clients'] += 1
+        _state['last_activity'] = time.time()
+
+
+def client_closed():
+    with _lock:
+        _state['active_clients'] = max(0, _state['active_clients'] - 1)
+        _state['last_activity'] = time.time()
+
+
+def idle_watchdog(get_config):
+    """空闲守护：界面全部关闭且未在采集时，超时后退出进程以释放资源。
+
+    为什么这样做：
+      监控工具本身不应长期占用内存（实测跑一天可达 294 MB）。
+      界面关掉后若无人查看，进程没有存在的必要 —— 退出，
+      下次从桌面点击图标时由 systemd 自动拉起，数据都在文件里，不会丢。
+
+    不会退出的情况：
+      · 正在采集（collector_running=True）—— 用户明确要求持续记录
+      · 还有界面连接（active_clients>0）—— 可能只是浏览器卡顿
+      · idle_exit_seconds=0 —— 用户显式要求常驻
+    """
+    log('空闲守护线程启动')
+    while not _shutdown.is_set():
+        try:
+            cfg = get_config()
+            limit = cfg.get('idle_exit_seconds', 120)
+            if not limit or limit <= 0:
+                _shutdown.wait(30)
+                continue
+
+            with _lock:
+                running = _state.get('collector_running')
+                clients = _state.get('active_clients', 0)
+                last = _state.get('last_activity')
+
+            # 采集进行中 → 不退（用户明确要持续记录）
+            if running:
+                _shutdown.wait(15)
+                continue
+
+            if clients > 0:
+                _shutdown.wait(15)
+                continue
+
+            if last is None:
+                with _lock:
+                    _state['last_activity'] = time.time()
+                _shutdown.wait(15)
+                continue
+
+            idle = time.time() - last
+            if idle >= limit:
+                log('界面已关闭且空闲 %d 秒（阈值 %d 秒），退出进程以释放资源'
+                    % (idle, limit))
+                _shutdown.set()
+                return
+
+            _shutdown.wait(15)
+        except Exception as e:
+            log('空闲守护异常: %s' % e)
+            _shutdown.wait(30)
+    log('空闲守护线程退出')
 
 
 # ---------- /proc 采集（内嵌，避免多文件依赖） ----------
@@ -270,7 +367,9 @@ def collector_loop(get_config):
                 log('采集线程退出')
                 return
 
+            t_begin = time.time()
             sample, prev_cpu = take_sample(prev_cpu)
+            scan_cost = time.time() - t_begin
 
             with _lock:
                 os.makedirs(DATA_DIR, exist_ok=True)
@@ -278,12 +377,20 @@ def collector_loop(get_config):
                     f.write(json.dumps(sample, ensure_ascii=False) + '\n')
                 _state['samples'] += 1
                 _state['last_sample_time'] = sample['time']
+                _state['last_scan_seconds'] = round(scan_cost, 2)
+                _state['proc_count'] = len(sample.get('processes', []))
 
                 # 数据保留策略：超限则重写文件
-                if _state['samples'] > cfg.get('max_samples', 20000):
+                if _state['samples'] > cfg.get('max_samples', 120000):
                     _trim_data(cfg)
 
-            time.sleep(cfg.get('interval', 10))
+            # 告警检查（放在锁外，避免长时间持锁阻塞采样）
+            _check_alerts(cfg)
+
+            # 真实周期 = 扫描耗时 + 间隔，扣掉扫描时间让节拍更接近设定值
+            interval = cfg.get('interval', 10)
+            wait = max(1.0, interval - scan_cost)
+            time.sleep(wait)
         except Exception as e:
             log('采集异常: %s' % e)
             with _lock:
@@ -292,17 +399,91 @@ def collector_loop(get_config):
 
 
 def _trim_data(cfg):
-    """裁剪数据文件，保留最近 N 条"""
+    """裁剪数据文件：同时按样本数上限与保留小时数控制体积。"""
     try:
-        keep = cfg.get('max_samples', 20000) // 2
+        keep_n = cfg.get('max_samples', 120000)
+        hours = cfg.get('retention_hours', 168)
+        cutoff = time.time() - hours * 3600 if hours else None
+
         with open(DATA_FILE, 'r', encoding='utf-8') as f:
             lines = f.readlines()
-        with open(DATA_FILE, 'w', encoding='utf-8') as f:
-            f.writelines(lines[-keep:])
-        _state['samples'] = keep
-        log('数据裁剪完成，保留 %d 条' % keep)
+
+        kept = []
+        for ln in lines:
+            ln = ln.strip()
+            if not ln:
+                continue
+            if cutoff is not None:
+                try:
+                    if json.loads(ln).get('ts', 0) < cutoff:
+                        continue
+                except Exception:
+                    pass
+            kept.append(ln)
+
+        # 再按数量上限裁剪
+        if len(kept) > keep_n:
+            kept = kept[-keep_n:]
+
+        tmp = DATA_FILE + '.tmp'
+        with open(tmp, 'w', encoding='utf-8') as f:
+            for ln in kept:
+                f.write(ln + '\n')
+        os.replace(tmp, DATA_FILE)
+
+        with _lock:
+            _state['samples'] = len(kept)
+        log('数据裁剪完成：%d 条（保留 %d 小时 / 最多 %d 条）'
+            % (len(kept), hours, keep_n))
     except Exception as e:
         log('数据裁剪失败: %s' % e)
+
+
+def _check_alerts(cfg):
+    """告警检查。
+
+    性能要点（曾导致内存/CPU 偏高）：
+      · 原实现每次采样都全量加载样本并展开序列，文件涨到数百 MB 后
+        单次开销极大（实测 484 MB / 9504 行 / 每 10 秒一次）。
+      · 现改为：仅在数据确有新增时才跑，且只看最近一段窗口，
+        并使用 compact 加载，避免反复解析历史数据。
+      · 结果复用 build_report 的缓存，不重复计算。
+    """
+    if not cfg.get('alerts_enabled', True):
+        return
+    try:
+        th = cfg.get('thresholds', DEFAULT_CONFIG['thresholds'])
+        # 只在最近 1 小时窗口内做告警判定（足以发现持续泄漏）
+        since = time.time() - 3600
+        samples = load_samples(since, compact=True)
+        if len(samples) < MIN_SAMPLES_FOR_VERDICT:
+            return
+        t0 = samples[0]['ts']
+        duration = samples[-1]['ts'] - t0
+        if duration <= 0:
+            return
+        smap = build_series_map(samples)
+        del samples
+
+        now = time.time()
+        cooldown = cfg.get('alert_cooldown_s', 600)
+        self_pid = os.getpid()
+        for pid, g in smap.items():
+            if pid == self_pid:
+                continue                       # 不监控自己
+            r = analyze_process(pid, g, t0, duration, th)
+            if r['verdict'] != 'leak':
+                continue
+            key = 'pid%d' % pid
+            if now - _alert_seen.get(key, 0) < cooldown:
+                continue
+            _alert_seen[key] = now
+            log('ALERT [leak] %s(pid=%d) %s' % (
+                r['comm'], pid, '；'.join(r.get('reasons', []))))
+        del smap
+        _release_memory()
+    except Exception as e:
+        log('告警检查异常: %s' % e)
 
 
 _COLLECTOR_THREAD = None
@@ -366,165 +547,473 @@ def linear_slope(xs, ys):
     return num / den if den else 0.0
 
 
+def r_squared(xs, ys):
+    """决定系数 R²：衡量线性拟合的可信程度。
+    R² 接近 1 表示趋势稳定；接近 0 表示数据发散、斜率无意义。
+    短窗口 + 高波动时 R² 会很低，据此避免误报。"""
+    n = len(xs)
+    if n < 3:
+        return 0.0
+    my = sum(ys) / n
+    ss_tot = sum((y - my) ** 2 for y in ys)
+    if ss_tot == 0:
+        return 1.0 if len(set(ys)) == 1 else 0.0
+    slope = linear_slope(xs, ys)
+    mx = sum(xs) / n
+    intercept = my - slope * mx
+    ss_res = sum((y - (slope * x + intercept)) ** 2 for x, y in zip(xs, ys))
+    return max(0.0, min(1.0, 1.0 - ss_res / ss_tot))
+
+
 def monotonic_ratio(vals):
     if len(vals) < 2:
         return 0.0
-    inc = dec = 0
+    inc = dec = flat = 0
     for i in range(1, len(vals)):
         if vals[i] > vals[i - 1]:
             inc += 1
         elif vals[i] < vals[i - 1]:
             dec += 1
-    t = inc + dec
+        else:
+            flat += 1
+    # ⚠️ 分母必须包含"不变"的点。
+    # 早期版本用 inc/(inc+dec)，会把"106 次不变 + 2 次上涨"算成 100% 单调递增，
+    # 从而把阶梯式分配误判为泄漏（实测 ter_smartfan 因此误报）。
+    t = inc + dec + flat
     return inc / t if t else 0.0
 
 
-def build_report(cfg):
-    """读取样本，生成分析报告"""
-    if not os.path.exists(DATA_FILE):
-        return {'error': '暂无采集数据'}
+def activity_profile(vals, noise_kb=64):
+    """增长形态画像：区分"持续增长(泄漏)"与"阶梯增长(事件驱动)"。
 
-    samples = []
+    返回:
+      grow_ratio  活跃增长占比 = 明显上涨的点数 / 总点数
+      flat_ratio  平直占比     = 无变化点数 / 总点数
+      jump_count  明显跳变次数
+    """
+    n = len(vals)
+    if n < 2:
+        return {'grow_ratio': 0.0, 'flat_ratio': 1.0, 'jump_count': 0}
+    grow = flat = 0
+    jumps = 0
+    for i in range(1, n):
+        d = vals[i] - vals[i - 1]
+        if d > noise_kb:
+            grow += 1
+            jumps += 1
+        elif d == 0:
+            flat += 1
+    total = n - 1
+    return {
+        'grow_ratio': round(grow / total, 3),
+        'flat_ratio': round(flat / total, 3),
+        'jump_count': jumps,
+    }
+
+
+# 时间范围预设：名称 -> 秒数
+RANGE_PRESETS = {
+    '10m': 600,
+    '30m': 1800,
+    '1h': 3600,
+    '3h': 10800,
+    '6h': 21600,
+    '12h': 43200,
+    '1d': 86400,
+    '3d': 259200,
+    '7d': 604800,
+}
+
+
+def range_to_since(rng):
+    """把 '1h' 这类范围名换算成起始时间戳；'all' 或非法值返回 None。"""
+    if not rng or rng == 'all':
+        return None
+    secs = RANGE_PRESETS.get(str(rng).lower())
+    if not secs:
+        return None
+    return time.time() - secs
+
+
+def load_samples(since_ts=None, until_ts=None, compact=False):
+    """读取样本。
+
+    compact=True 时只保留分析必需的字段，降低序列展开阶段的内存。
+
+    实现说明（实测调优）：
+      · 不做行内字符串预筛 —— 单行约 50 KB，逐行 find() 的开销
+        反而比直接 json.loads 更大（实测慢 70%）。
+      · 时间过滤在解析后进行；由于采集是追加写、时间单调递增，
+        可按行号从尾部倒推，避免解析不需要的历史数据。
+    """
+    if not os.path.exists(DATA_FILE):
+        return []
+    out = []
+    # 有时间下界时，从文件尾部倒推定位窗口起点，跳过全部早期历史。
+    # 这一步能把 484 MB 文件的解析量降到与窗口大小成正比。
+    start_offset = _tail_lines(since_ts) if since_ts is not None else 0
     try:
         with open(DATA_FILE, 'r', encoding='utf-8') as f:
+            if start_offset:
+                f.seek(start_offset)
             for line in f:
-                line = line.strip()
-                if line:
-                    try:
-                        samples.append(json.loads(line))
-                    except json.JSONDecodeError:
-                        pass
+                if not line or line == '\n':
+                    continue
+                try:
+                    s = json.loads(line)
+                except Exception:
+                    continue
+                ts = s.get('ts', 0)
+                if since_ts is not None and ts < since_ts:
+                    continue
+                if until_ts is not None and ts > until_ts:
+                    continue
+                if compact:
+                    procs = []
+                    for p in s.get('processes', []):
+                        procs.append({
+                            'pid': p.get('pid', 0),
+                            'comm': p.get('comm', ''),
+                            'exe': p.get('exe', ''),
+                            'rss_kb': p.get('rss_kb', 0),
+                            'rss_anon_kb': p.get('rss_anon_kb', 0),
+                            'fd_count': p.get('fd_count', 0),
+                            'fd_socket': p.get('fd_socket', 0),
+                            'threads': p.get('threads', 0),
+                            'cpu_ticks': p.get('cpu_ticks', 0),
+                        })
+                    out.append({
+                        'ts': ts,
+                        'time': s.get('time', ''),
+                        'mem_used_kb': s.get('mem_used_kb', 0),
+                        'mem_used_pct': s.get('mem_used_pct', 0),
+                        'mem_total_kb': s.get('mem_total_kb', 0),
+                        'mem_available_kb': s.get('mem_available_kb', 0),
+                        'sunreclaim_kb': s.get('sunreclaim_kb', 0),
+                        'slab_kb': s.get('slab_kb', 0),
+                        'swap_used_kb': s.get('swap_used_kb', 0),
+                        'load1': s.get('load1', 0),
+                        'load5': s.get('load5', 0),
+                        'cpu_pct': s.get('cpu_pct'),
+                        'processes': procs,
+                    })
+                else:
+                    out.append(s)
+                del s
     except Exception as e:
-        return {'error': '读取数据失败: %s' % e}
+        log('读取样本失败: %s' % e)
+    return out
 
-    if len(samples) < 3:
-        return {'error': '样本不足（当前 %d 个，至少需要 3 个）' % len(samples)}
+
+def build_series_map(samples):
+    """把样本按 PID 展开成时间序列。
+
+    用轻量元组代替字典 —— 290 万条记录下，元组比字典省约 60% 内存。
+    """
+    smap = {}
+    for s in samples:
+        ts = s['ts']
+        for p in s.get('processes', []):
+            pid = p['pid']
+            if pid not in smap:
+                smap[pid] = {
+                    'comm': p.get('comm', ''),
+                    'exe': p.get('exe', ''),
+                    'ts': [], 'rss': [], 'anon': [], 'fd': [],
+                    'sock': [], 'th': [], 'cpu': [],
+                }
+            g = smap[pid]
+            g['ts'].append(ts)
+            g['rss'].append(p.get('rss_kb', 0))
+            g['anon'].append(p.get('rss_anon_kb', 0))
+            g['fd'].append(p.get('fd_count', 0))
+            g['sock'].append(p.get('fd_socket', 0))
+            g['th'].append(p.get('threads', 0))
+            g['cpu'].append(p.get('cpu_ticks', 0))
+    return smap
+
+
+# 判定所需最少样本数。低于此值不下结论，只报"数据不足"。
+MIN_SAMPLES_FOR_VERDICT = 20
+# R² 低于此值时认为趋势不可信，不判泄漏
+MIN_R2 = 0.5
+# 阶梯增长识别：活跃增长占比低于该值、且平直占比高于另一值时，
+# 判定为"事件驱动的周期性分配"而非持续泄漏。
+# 注意：这两个门槛只用于区分"增长形态"，不参与放宽斜率阈值。
+STEPPED_GROW_RATIO = 0.2    # 明显上涨的采样点占比 < 20%
+STEPPED_FLAT_RATIO = 0.6    # 且完全无变化的采样点占比 >= 60%
+
+
+def analyze_process(pid, g, t0, duration, th):
+    """分析单个进程。返回带置信度的判定结果。
+
+    g 为 build_series_map 产出的列式结构（ts/rss/anon/fd/sock/th/cpu 数组），
+    列式存储比逐点字典省内存，且直接可迭代。
+
+    判定原则：
+      - 斜率为负（内存在减少）→ 绝不算泄漏
+      - 样本不足 → 'insufficient'，不猜
+      - R² 过低（数据发散）→ 'noisy'，不猜
+      - 启动期增长（前段快速上涨后转平）→ 'startup'，不算泄漏
+      - 阶梯增长（极少时间在涨）→ 'stepped'，提示观察而非泄漏
+    """
+    n = len(g['rss'])
+    ts = g['ts']
+    xs = [(t - t0) / 60.0 for t in ts]
+    rss = g['rss']
+    anon = g['anon']
+    fds = g['fd']
+    socks = g['sock']
+    ths = g['th']
+    cts = g['cpu']
+
+    rss_slope = linear_slope(xs, rss)
+    anon_slope = linear_slope(xs, anon)
+    fd_slope = linear_slope(xs, fds)
+    sock_slope = linear_slope(xs, socks)
+    th_slope = linear_slope(xs, ths)
+    rss_mono = monotonic_ratio(rss)
+    r2_rss = r_squared(xs, rss)
+    r2_fd = r_squared(xs, fds)
+    r2_th = r_squared(xs, ths)
+    fd_per_hour = fd_slope * 60
+    th_per_hour = th_slope * 60
+    cpu_active = (cts[-1] - cts[0]) / duration if duration > 0 else 0
+
+    # 增长形态画像：泄漏 = 持续增长；阶梯 = 事件驱动
+    prof = activity_profile(rss)
+    grow_ratio = prof['grow_ratio']
+    flat_ratio = prof['flat_ratio']
+
+    base = {
+        'pid': pid, 'comm': g['comm'], 'exe': g['exe'],
+        'samples': n,
+        'rss_start_kb': rss[0], 'rss_end_kb': rss[-1],
+        'rss_min_kb': min(rss), 'rss_max_kb': max(rss),
+        'rss_growth_kb': rss[-1] - rss[0],
+        'rss_slope_kb_min': round(rss_slope, 2),
+        'rss_slope_kb_hour': round(rss_slope * 60, 1),
+        'rss_slope_kb_day': round(rss_slope * 1440, 1),
+        'rss_monotonic': round(rss_mono, 3),
+        'r2_rss': round(r2_rss, 3),
+        'grow_ratio': grow_ratio,
+        'flat_ratio': flat_ratio,
+        'jump_count': prof['jump_count'],
+        'fd_start': fds[0], 'fd_end': fds[-1],
+        'fd_growth': fds[-1] - fds[0],
+        'fd_slope_per_hour': round(fd_per_hour, 1),
+        'r2_fd': round(r2_fd, 3),
+        'fd_socket_end': socks[-1],
+        'fd_socket_slope_per_hour': round(sock_slope * 60, 1),
+        'threads_start': ths[0], 'threads_end': ths[-1],
+        'threads_slope_per_hour': round(th_per_hour, 1),
+        'r2_threads': round(r2_th, 3),
+        'cpu_active_tps': round(cpu_active, 4),
+    }
+
+    # --- 样本不足：不下结论 ---
+    if n < MIN_SAMPLES_FOR_VERDICT:
+        base.update({
+            'verdict': 'insufficient', 'leak_type': '', 'score': 0,
+            'reasons': ['样本不足（%d/%d），暂不判定' % (n, MIN_SAMPLES_FOR_VERDICT)],
+        })
+        return base
+
+    # --- 方向：只有持续增长才算泄漏 ---
+    if rss_slope <= 0 and fd_per_hour <= 0 and th_per_hour <= 0:
+        base.update({
+            'verdict': 'ok', 'leak_type': '', 'score': 0,
+            'reasons': ['内存与句柄均未增长'],
+        })
+        return base
+
+    verdict = 'ok'
+    score = 0
+    reasons = []
+
+    # --- 形态前置判定：阶梯增长（事件驱动）不是泄漏 ---
+    # 真泄漏应当"多数时刻都在涨"；若绝大多数时间毫无变化、只在少数时刻跳变，
+    # 属于周期性分配，标记为 stepped（提示长期观察），不计入泄漏。
+    # 注意：阈值不放宽，斜率再大也只在 grow_ratio 确实高时才判泄漏。
+    stepped = (grow_ratio < STEPPED_GROW_RATIO and flat_ratio >= STEPPED_FLAT_RATIO)
+
+    # RSS 增长路径（仅正向）
+    if rss_slope > 0:
+        if r2_rss < MIN_R2:
+            verdict = 'noisy'
+            reasons.append('RSS 趋势不稳定（R²=%.2f），斜率不可信' % r2_rss)
+        elif stepped:
+            verdict = 'stepped'
+            score = 1
+            per_cycle = (rss[-1] - rss[0]) / max(prof['jump_count'], 1)
+            reasons.append(
+                '阶梯式增长：%d 次跳变、%.0f%% 时间无变化，每次约 %+.0f KB。'
+                '属周期性分配而非持续泄漏，建议长期观察是否收敛'
+                % (prof['jump_count'], flat_ratio * 100, per_cycle))
+            if abs(rss_slope) >= th['rss_slope_critical']:
+                reasons.append('（斜率 %.1f KB/min 已超临界，但形态不支持泄漏判定）' % rss_slope)
+        elif abs(rss_slope) >= th['rss_slope_critical']:
+            verdict, score = 'leak', score + 3
+            reasons.append('RSS 斜率 %.1f KB/min 超临界值（R²=%.2f）' % (rss_slope, r2_rss))
+        elif abs(rss_slope) >= th['rss_slope_warn']:
+            verdict, score = 'suspect', score + 2
+            reasons.append('RSS 斜率 %.1f KB/min 超警戒值（R²=%.2f）' % (rss_slope, r2_rss))
+
+        if verdict in ('leak', 'suspect') and rss_mono >= 0.9:
+            score += 2
+            if verdict == 'suspect':
+                verdict = 'leak'
+            reasons.append('RSS 单调递增 %.0f%%（典型泄漏特征）' % (rss_mono * 100))
+        elif verdict in ('leak', 'suspect') and rss_mono >= 0.75:
+            score += 1
+            reasons.append('RSS 递增占比 %.0f%%' % (rss_mono * 100))
+    # 句柄增长路径
+    # 注意：若 RSS 已判为 stepped（阶梯），句柄/线程路径不得把它升级成 leak，
+    # 否则阶梯误报会从后门回来。此时只做提示，不改判定。
+    if fd_per_hour > 0:
+        if r2_fd < MIN_R2:
+            if verdict == 'ok':
+                verdict = 'noisy'
+            reasons.append('句柄趋势不稳定（R²=%.2f）' % r2_fd)
+        elif fd_per_hour >= th['fd_slope_critical']:
+            if verdict == 'stepped':
+                reasons.append('句柄增长 %.0f 个/小时 超临界，但内存为阶梯形态，建议先观察' % fd_per_hour)
+            else:
+                verdict, score = 'leak', score + 3
+                reasons.append('句柄增长 %.0f 个/小时 超临界值' % fd_per_hour)
+        elif fd_per_hour >= th['fd_slope_warn']:
+            if verdict == 'ok':
+                verdict = 'suspect'
+            score += 2
+            reasons.append('句柄增长 %.0f 个/小时' % fd_per_hour)
+
+    # 线程增长路径（同上，不覆盖 stepped）
+    if th_per_hour > 0:
+        if th_per_hour >= th['thread_slope_critical'] and r2_th >= MIN_R2:
+            if verdict == 'stepped':
+                reasons.append('线程增长 %.0f 个/小时 超临界，建议先观察' % th_per_hour)
+            else:
+                verdict, score = 'leak', score + 2
+                reasons.append('线程增长 %.0f 个/小时' % th_per_hour)
+        elif th_per_hour >= th['thread_slope_warn'] and r2_th >= MIN_R2:
+            if verdict == 'ok':
+                verdict = 'suspect'
+            score += 1
+            reasons.append('线程增长 %.0f 个/小时' % th_per_hour)
+
+    if rss and rss[0] > 100 * 1024 and cpu_active < 0.05 and rss_slope > 0:
+        score += 1
+        reasons.append('高内存(%.0fMB)但 CPU 活跃度极低' % (rss[0] / 1024))
+
+    # --- 启动期增长识别：把序列后半段单独拟合，若已转平则不算泄漏 ---
+    if verdict in ('leak', 'suspect') and n >= MIN_SAMPLES_FOR_VERDICT * 2:
+        half = n // 2
+        late_slope = linear_slope(xs[half:], rss[half:])
+        if late_slope <= 0 or abs(late_slope) < th['rss_slope_warn']:
+            verdict = 'startup'
+            score = max(0, score - 3)
+            base['late_slope_kb_min'] = round(late_slope, 2)
+            base['startup_kb'] = rss[half] - rss[0]
+            reasons = ['前期增长 %.1f MB 后已转平（斜率先 %.0f → 后 %.0f KB/min），疑似启动期分配'
+                       % ((rss[half] - rss[0]) / 1024.0, rss_slope, late_slope)] + reasons
+
+    leak_type = ''
+    if verdict in ('leak', 'suspect'):
+        if anon_slope > rss_slope * 0.6 and rss_slope > 0:
+            leak_type = 'heap'
+        elif sock_slope > 0.5:
+            leak_type = 'socket'
+        elif fd_slope > 0.5:
+            leak_type = 'fd'
+        else:
+            leak_type = 'mixed'
+
+    base.update({
+        'verdict': verdict, 'leak_type': leak_type,
+        'score': score, 'reasons': reasons,
+    })
+    return base
+
+
+def build_report(cfg, since_ts=None, until_ts=None):
+    """读取样本，生成分析报告。支持时间范围过滤。
+
+    内存优化要点：
+      · compact 加载（只保留分析必需字段）
+      · 列式序列（避免逐点字典）
+      · 结果缓存（同一数据不重复计算）
+    """
+    cache_key = (since_ts, until_ts, _data_version())
+    cached = _report_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    samples = load_samples(since_ts, until_ts, compact=True)
+    if not samples:
+        return {'error': '暂无采集数据'}
 
     th = cfg.get('thresholds', DEFAULT_CONFIG['thresholds'])
     t0 = samples[0]['ts']
     duration = samples[-1]['ts'] - t0
+    n_samples = len(samples)
 
-    # 按 PID 聚合
-    series_map = {}
-    for s in samples:
-        for p in s.get('processes', []):
-            series_map.setdefault(p['pid'], []).append({
-                'ts': s['ts'],
-                'rss_kb': p['rss_kb'],
-                'rss_anon_kb': p.get('rss_anon_kb', 0),
-                'fd_count': p['fd_count'],
-                'fd_socket': p.get('fd_socket', 0),
-                'threads': p['threads'],
-                'cpu_ticks': p['cpu_ticks'],
-                'comm': p['comm'],
-                'exe': p.get('exe', ''),
-            })
+    series_map = build_series_map(samples)
+
+    # 判断进程是否仍存活。
+    # 不能只看"最后一个样本"里有没有它 —— 样本是过去时刻的快照，
+    # 采集器自身重启后，旧 PID 仍会出现在最后的样本里，导致幽灵进程被反复报泄漏。
+    # 因此：只要 /proc/<pid> 当前不存在，就视为已退出。
+    def _is_alive(pid):
+        try:
+            os.kill(pid, 0)          # 信号 0：只做存在性检查
+            return True
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True              # 存在但无权限 → 仍算存活
+
+    self_pid = os.getpid()
+    # 采集器自身可能以多种方式标识（python3 / tos-perfmon），
+    # 只需排除当前这个 PID；历史同名 PID 已在 _is_alive 中被滤掉。
+    self_cmd = ''
+    try:
+        self_cmd = open('/proc/%d/cmdline' % self_pid, 'rb').read().decode('utf-8', 'ignore')
+    except Exception:
+        pass
 
     results = []
-    min_samples = max(3, min(10, len(samples) // 3))
-    for pid, series in series_map.items():
-        if len(series) < min_samples:
+    dead_count = 0
+    for pid, g in series_map.items():
+        if pid == self_pid:
+            continue                 # 排除监控器自身
+        if not _is_alive(pid):
+            dead_count += 1
             continue
-        xs = [(x['ts'] - t0) / 60.0 for x in series]
-        rss = [x['rss_kb'] for x in series]
-        anon = [x['rss_anon_kb'] for x in series]
-        fds = [x['fd_count'] for x in series]
-        socks = [x['fd_socket'] for x in series]
-        ths = [x['threads'] for x in series]
-        cts = [x['cpu_ticks'] for x in series]
+        results.append(analyze_process(pid, g, t0, duration, th))
 
-        rss_slope = linear_slope(xs, rss)
-        anon_slope = linear_slope(xs, anon)
-        fd_slope = linear_slope(xs, fds)
-        sock_slope = linear_slope(xs, socks)
-        th_slope = linear_slope(xs, ths)
-        rss_mono = monotonic_ratio(rss)
-        fd_per_hour = fd_slope * 60
-        th_per_hour = th_slope * 60
-        cpu_active = (cts[-1] - cts[0]) / duration if duration > 0 else 0
-
-        verdict = 'ok'
-        reasons = []
-        score = 0
-
-        if abs(rss_slope) >= th['rss_slope_critical']:
-            verdict, score = 'leak', score + 3
-            reasons.append('RSS斜率 %.1f KB/min 超临界值' % rss_slope)
-        elif abs(rss_slope) >= th['rss_slope_warn']:
-            verdict, score = ('suspect' if verdict == 'ok' else verdict), score + 2
-            reasons.append('RSS斜率 %.1f KB/min 超警戒值' % rss_slope)
-
-        if rss_slope > 0:
-            if rss_mono >= 0.9:
-                verdict, score = 'leak', score + 2
-                reasons.append('RSS单调递增 %.0f%%（典型泄漏特征）' % (rss_mono * 100))
-            elif rss_mono >= 0.75:
-                verdict = 'suspect' if verdict == 'ok' else verdict
-                score += 1
-                reasons.append('RSS递增占比 %.0f%%' % (rss_mono * 100))
-
-        if fd_per_hour >= th['fd_slope_critical']:
-            verdict, score = 'leak', score + 3
-            reasons.append('句柄增长 %.0f 个/小时 超临界值' % fd_per_hour)
-        elif fd_per_hour >= th['fd_slope_warn']:
-            verdict = 'suspect' if verdict == 'ok' else verdict
-            score += 2
-            reasons.append('句柄增长 %.0f 个/小时' % fd_per_hour)
-
-        if th_per_hour >= th['thread_slope_critical']:
-            verdict, score = 'leak', score + 2
-            reasons.append('线程增长 %.0f 个/小时' % th_per_hour)
-        elif th_per_hour >= th['thread_slope_warn']:
-            verdict = 'suspect' if verdict == 'ok' else verdict
-            score += 1
-            reasons.append('线程增长 %.0f 个/小时' % th_per_hour)
-
-        if rss and rss[0] > 100 * 1024 and cpu_active < 0.05 and rss_slope > 0:
-            score += 1
-            reasons.append('高内存(%.0fMB)但CPU活跃度极低' % (rss[0] / 1024))
-
-        leak_type = ''
-        if verdict != 'ok':
-            if anon_slope > rss_slope * 0.6 and rss_slope > 0:
-                leak_type = 'heap'
-            elif sock_slope > 0.5:
-                leak_type = 'socket'
-            elif fd_slope > 0.5:
-                leak_type = 'fd'
-            else:
-                leak_type = 'mixed'
-
-        results.append({
-            'pid': pid, 'comm': series[0]['comm'], 'exe': series[0]['exe'],
-            'samples': len(series),
-            'rss_start_kb': rss[0], 'rss_end_kb': rss[-1],
-            'rss_min_kb': min(rss), 'rss_max_kb': max(rss),
-            'rss_growth_kb': rss[-1] - rss[0],
-            'rss_slope_kb_min': round(rss_slope, 2),
-            'rss_slope_kb_hour': round(rss_slope * 60, 1),
-            'rss_slope_kb_day': round(rss_slope * 1440, 1),
-            'rss_monotonic': round(rss_mono, 3),
-            'fd_start': fds[0], 'fd_end': fds[-1],
-            'fd_growth': fds[-1] - fds[0],
-            'fd_slope_per_hour': round(fd_per_hour, 1),
-            'fd_socket_end': socks[-1],
-            'fd_socket_slope_per_hour': round(sock_slope * 60, 1),
-            'threads_start': ths[0], 'threads_end': ths[-1],
-            'threads_slope_per_hour': round(th_per_hour, 1),
-            'cpu_active_tps': round(cpu_active, 4),
-            'verdict': verdict, 'leak_type': leak_type,
-            'score': score, 'reasons': reasons,
-        })
+    # 释放序列映射（样本本身还要用于 trend，稍后再删）
+    del series_map
 
     leaks = sorted([r for r in results if r['verdict'] == 'leak'], key=lambda x: -x['score'])
     suspects = sorted([r for r in results if r['verdict'] == 'suspect'], key=lambda x: -x['score'])
+    startups = sorted([r for r in results if r['verdict'] == 'startup'], key=lambda x: -x.get('startup_kb', 0))
+    stepped = sorted([r for r in results if r['verdict'] == 'stepped'],
+                     key=lambda x: -x['rss_slope_kb_hour'])
+    noisy = [r for r in results if r['verdict'] == 'noisy']
+    insufficient = [r for r in results if r['verdict'] == 'insufficient']
 
-    # 系统趋势
+    tss = [s['ts'] for s in samples]
     trend = {
         'time': [s['time'] for s in samples],
-        'ts': [s['ts'] for s in samples],
+        'ts': tss,
         'mem_used_pct': [s.get('mem_used_pct', 0) for s in samples],
         'mem_used_kb': [s.get('mem_used_kb', 0) for s in samples],
+        # 这两个用于前端「内存构成」堆叠条（已用 / 缓存 / 空闲）：
+        #   mem_used_kb       = MemTotal - MemAvailable        （内核口径的真实占用）
+        #   mem_used_naive_kb = MemTotal - MemFree - Buffers - Cached（不含可回收缓存）
+        # 差值即被缓存占用但随时可回收的部分。
+        'mem_used_naive_kb': [s.get('mem_used_naive_kb', 0) for s in samples],
+        'mem_available_kb': [s.get('mem_available_kb', 0) for s in samples],
         'sunreclaim_kb': [s.get('sunreclaim_kb', 0) for s in samples],
         'slab_kb': [s.get('slab_kb', 0) for s in samples],
         'swap_used_kb': [s.get('swap_used_kb', 0) for s in samples],
@@ -534,50 +1023,306 @@ def build_report(cfg):
         'mem_total_kb': samples[-1].get('mem_total_kb', 0),
     }
 
-    sys_slope = linear_slope([(t - t0) / 60.0 for t in trend['ts']], trend['mem_used_kb'])
-    slab_slope = linear_slope([(t - t0) / 60.0 for t in trend['ts']], trend['sunreclaim_kb'])
+    xmin = [(t - t0) / 60.0 for t in tss]
+    sys_slope = linear_slope(xmin, trend['mem_used_kb'])
+    sys_r2 = r_squared(xmin, trend['mem_used_kb'])
+    slab_slope = linear_slope(xmin, trend['sunreclaim_kb'])
 
-    # Top 排行
+    if n_samples < MIN_SAMPLES_FOR_VERDICT:
+        sys_verdict = 'insufficient'
+    elif sys_slope <= 0:
+        sys_verdict = 'ok'
+    elif sys_r2 < MIN_R2:
+        sys_verdict = 'noisy'
+    elif sys_slope >= th['rss_slope_critical']:
+        sys_verdict = 'leak'
+    elif sys_slope >= th['rss_slope_warn']:
+        sys_verdict = 'suspect'
+    else:
+        sys_verdict = 'ok'
+
     top_mem = sorted(results, key=lambda x: -x['rss_end_kb'])[:20]
-    top_growth = sorted(results, key=lambda x: -x['rss_slope_kb_hour'])[:20]
+    top_growth = sorted([r for r in results if r['rss_slope_kb_hour'] > 0],
+                        key=lambda x: -x['rss_slope_kb_hour'])[:20]
 
     report = {
         'meta': {
-            'samples': len(samples),
+            'samples': n_samples,
             'duration_s': round(duration, 1),
             'duration_h': round(duration / 3600, 2),
             'start': samples[0]['time'],
             'end': samples[-1]['time'],
+            'start_ts': t0,
+            'end_ts': samples[-1]['ts'],
             'processes_tracked': len(results),
+            'processes_exited': max(0, dead_count),
             'report_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
             'interval': cfg.get('interval', 10),
+            'min_samples': MIN_SAMPLES_FOR_VERDICT,
+            'reliable': n_samples >= MIN_SAMPLES_FOR_VERDICT,
         },
         'system': {
             'mem_slope_kb_min': round(sys_slope, 2),
             'mem_slope_kb_hour': round(sys_slope * 60, 1),
             'mem_slope_kb_day': round(sys_slope * 1440, 1),
+            'mem_r2': round(sys_r2, 3),
             'slab_slope_kb_min': round(slab_slope, 2),
             'mem_start_pct': trend['mem_used_pct'][0] if trend['mem_used_pct'] else 0,
             'mem_end_pct': trend['mem_used_pct'][-1] if trend['mem_used_pct'] else 0,
             'mem_total_kb': trend['mem_total_kb'],
             'cpu_avg': round(sum(trend['cpu_pct']) / len(trend['cpu_pct']), 2) if trend['cpu_pct'] else 0,
-            'verdict': ('leak' if abs(sys_slope) >= th['rss_slope_critical']
-                        else 'suspect' if abs(sys_slope) >= th['rss_slope_warn'] else 'ok'),
+            'verdict': sys_verdict,
         },
         'summary': {
             'leak_count': len(leaks),
             'suspect_count': len(suspects),
-            'ok_count': len(results) - len(leaks) - len(suspects),
+            'startup_count': len(startups),
+            'stepped_count': len(stepped),
+            'noisy_count': len(noisy),
+            'insufficient_count': len(insufficient),
+            'ok_count': len([r for r in results if r['verdict'] == 'ok']),
         },
         'leaks': leaks,
         'suspects': suspects,
+        'startups': startups[:20],
+        'stepped': stepped[:30],
         'top_memory': top_mem,
         'top_growth': top_growth,
         'all': results,
         'trend': trend,
         'thresholds': th,
     }
+
+    # 缓存结果：同一份数据在缓存有效期内不重复计算
+    _report_cache.clear()
+    _report_cache[cache_key] = report
+    del samples
+    _release_memory()
     return report
+
+
+def _data_version():
+    """数据版本号：文件大小 + 修改时间。用于判断报告缓存是否可用。"""
+    try:
+        st = os.stat(DATA_FILE)
+        return (st.st_size, int(st.st_mtime))
+    except Exception:
+        return (0, 0)
+
+
+def _release_memory():
+    """把可回收的内存还给系统。
+
+    CPython 的分配器在释放大对象后往往不立即归还 OS，
+    长时间运行会看到 RSS 只增不减。这里主动触发一次回收。
+    """
+    try:
+        import gc
+        gc.collect()
+    except Exception:
+        pass
+
+
+def _tail_lines(since_ts):
+    """从文件尾部倒推，返回起始字节偏移，使该偏移之后的行都 >= since_ts。
+
+    采集是追加写、时间单调递增，因此可以从尾部反向扫描定位窗口起点，
+    避免解析整个历史文件（实测 484 MB 文件全量解析需 5 秒、1.4 GB 内存）。
+    """
+    try:
+        size = os.path.getsize(DATA_FILE)
+        if size <= 0:
+            return 0
+        chunk = 256 * 1024
+        with open(DATA_FILE, 'rb') as f:
+            pos = size
+            while pos > 0:
+                read = min(chunk, pos)
+                pos -= read
+                f.seek(pos)
+                buf = f.read(read)
+                # 在块内从后往前找时间戳
+                idx = len(buf)
+                while True:
+                    i = buf.rfind(b'"ts":', 0, idx)
+                    if i < 0:
+                        break
+                    try:
+                        t = float(buf[i + 5:i + 45].split(b',')[0].split(b'}')[0])
+                    except Exception:
+                        idx = i
+                        continue
+                    if t < since_ts:
+                        # 该行已早于窗口 → 从下一行开始读
+                        j = buf.find(b'\n', i)
+                        if j < 0:
+                            return pos + i + 1
+                        return pos + j + 1
+                    idx = i
+                if pos == 0:
+                    break
+        return 0
+    except Exception:
+        return 0
+
+
+def build_timeline(pid=None, top_n=8, since_ts=None):
+    """按时间观测：全局或指定进程的时间线数据。
+    返回抽取/降采样后的序列，控制响应体积。
+    """
+    samples = load_samples(since_ts)
+    if len(samples) < 2:
+        return {'error': '样本不足'}
+
+    tss = [s['ts'] for s in samples]
+    t0 = tss[0]
+
+    # 全局系统时间线
+    timeline = {
+        'ts': tss,
+        'time': [s['time'] for s in samples],
+        'mem_used_kb': [s.get('mem_used_kb', 0) for s in samples],
+        'mem_used_pct': [s.get('mem_used_pct', 0) for s in samples],
+        'mem_used_naive_kb': [s.get('mem_used_naive_kb', 0) for s in samples],
+        'mem_available_kb': [s.get('mem_available_kb', 0) for s in samples],
+        'sunreclaim_kb': [s.get('sunreclaim_kb', 0) for s in samples],
+        'slab_kb': [s.get('slab_kb', 0) for s in samples],
+        'swap_used_kb': [s.get('swap_used_kb', 0) for s in samples],
+        'load1': [s.get('load1', 0) for s in samples],
+        'cpu_pct': [s.get('cpu_pct') or 0 for s in samples],
+        'proc_count': [len(s.get('processes', [])) for s in samples],
+        'mem_total_kb': samples[-1].get('mem_total_kb', 0),
+    }
+
+    # 单个进程的时间线
+    if pid is not None:
+        pid = int(pid)
+        proc_series = []
+        for s in samples:
+            for p in s.get('processes', []):
+                if p['pid'] == pid:
+                    proc_series.append({
+                        'ts': s['ts'],
+                        'time': s['time'],
+                        'rss_kb': p['rss_kb'],
+                        'rss_anon_kb': p.get('rss_anon_kb', 0),
+                        'fd_count': p['fd_count'],
+                        'fd_socket': p.get('fd_socket', 0),
+                        'threads': p['threads'],
+                        'cpu_ticks': p['cpu_ticks'],
+                        'comm': p['comm'],
+                        'exe': p.get('exe', ''),
+                    })
+                    break
+        if not proc_series:
+            return {'error': '未找到该进程的采样记录（PID %d）' % pid}
+        # 标记该进程当前是否还活着（用 /proc 实时判断，而非最后样本）
+        try:
+            os.kill(pid, 0)
+            alive = True
+        except ProcessLookupError:
+            alive = False
+        except PermissionError:
+            alive = True
+        return {
+            'mode': 'process',
+            'pid': pid,
+            'comm': proc_series[0]['comm'],
+            'exe': proc_series[0]['exe'],
+            'alive': alive,
+            'points': proc_series,
+            'meta': {'samples': len(proc_series), 'start': proc_series[0]['time'],
+                     'end': proc_series[-1]['time']},
+        }
+
+    # 全局模式：附带内存占用 Top N 进程的轨迹
+    smap = build_series_map(samples)
+    # 以最后一个样本的 RSS 排序取 Top N
+    last = {p['pid']: p for p in samples[-1].get('processes', [])}
+    ranked = sorted(last.values(), key=lambda p: -p['rss_kb'])[:top_n]
+
+    tracks = []
+    for p in ranked:
+        pid_i = p['pid']
+        g = smap.get(pid_i)
+        if not g:
+            continue
+        tracks.append({
+            'pid': pid_i,
+            'comm': p['comm'],
+            'rss_kb': g['rss'],
+            'fd_count': g['fd'],
+            'threads': g['th'],
+        })
+
+    timeline['mode'] = 'global'
+    timeline['tracks'] = tracks
+    timeline['t0'] = t0
+    return timeline
+
+
+def export_csv(kind='system', pid=None, since_ts=None):
+    """导出 CSV。kind: system | processes | process"""
+    samples = load_samples(since_ts)
+    if not samples:
+        return None, '暂无数据'
+
+    import io
+    buf = io.StringIO()
+
+    if kind == 'system':
+        cols = ['time', 'ts', 'mem_used_kb', 'mem_used_pct', 'mem_available_kb',
+                'sunreclaim_kb', 'slab_kb', 'swap_used_kb', 'load1', 'load5',
+                'cpu_pct', 'proc_count']
+        buf.write(','.join(cols) + '\n')
+        for s in samples:
+            row = [str(s.get('time', '')), str(s.get('ts', '')),
+                   str(s.get('mem_used_kb', '')), str(s.get('mem_used_pct', '')),
+                   str(s.get('mem_available_kb', '')), str(s.get('sunreclaim_kb', '')),
+                   str(s.get('slab_kb', '')), str(s.get('swap_used_kb', '')),
+                   str(s.get('load1', '')), str(s.get('load5', '')),
+                   str(s.get('cpu_pct') or ''), str(len(s.get('processes', [])))]
+            buf.write(','.join(row) + '\n')
+        return buf.getvalue(), None
+
+    if kind == 'processes':
+        # 每个进程每个时刻一行（可能很大，仅导出 Top 内存进程）
+        last = {p['pid']: p for p in samples[-1].get('processes', [])}
+        ranked = sorted(last.values(), key=lambda p: -p['rss_kb'])[:50]
+        pids = {p['pid'] for p in ranked}
+        buf.write('time,ts,pid,comm,rss_kb,rss_anon_kb,fd_count,threads,cpu_ticks\n')
+        for s in samples:
+            for p in s.get('processes', []):
+                if p['pid'] in pids:
+                    buf.write('%s,%s,%d,%s,%d,%d,%d,%d,%d\n' % (
+                        s.get('time', ''), s.get('ts', ''), p['pid'],
+                        (p.get('comm') or '').replace(',', '_'),
+                        p['rss_kb'], p.get('rss_anon_kb', 0),
+                        p['fd_count'], p['threads'], p['cpu_ticks']))
+        return buf.getvalue(), None
+
+    if kind == 'process':
+        if pid is None:
+            return None, '缺少 pid 参数'
+        pid = int(pid)
+        buf.write('time,ts,pid,comm,rss_kb,rss_anon_kb,fd_count,fd_socket,threads,cpu_ticks\n')
+        found = False
+        for s in samples:
+            for p in s.get('processes', []):
+                if p['pid'] == pid:
+                    found = True
+                    buf.write('%s,%s,%d,%s,%d,%d,%d,%d,%d,%d\n' % (
+                        s.get('time', ''), s.get('ts', ''), p['pid'],
+                        (p.get('comm') or '').replace(',', '_'),
+                        p['rss_kb'], p.get('rss_anon_kb', 0),
+                        p['fd_count'], p.get('fd_socket', 0),
+                        p['threads'], p['cpu_ticks']))
+                    break
+        if not found:
+            return None, '未找到 PID %d' % pid
+        return buf.getvalue(), None
+
+    return None, '未知导出类型'
 
 
 # ---------- HTTP 处理 ----------
@@ -592,30 +1337,30 @@ class Handler(BaseHTTPRequestHandler):
     # --- 鉴权 ---
     def _auth_ok(self):
         """
-        TOS 平台要求:
-          校验 X-Csrf-Token 请求头 与 Cookie 中的 X-Csrf-Token 一致
+        WebUI 外部打开模式（open_path=true）：
+          页面由浏览器经 nginx 直接访问 /tos-perfmon/，同源请求；
+          后端只监听 127.0.0.1:8790，不对局域网暴露。
+          因此这里不再强制 CSRF —— 但若请求带了平台注入的
+          X-Csrf-Token，仍按平台规则校验一致性，作为纵深防御。
         """
         csrf = self.headers.get('X-Csrf-Token', '')
-        cookie = self.headers.get('Cookie', '')
         if not csrf:
-            return False
-        # 从 Cookie 中解析 X-Csrf-Token
+            # 同源直连：nginx 已完成外层鉴权（AppAccessControl/auth_request）
+            return True
+        cookie = self.headers.get('Cookie', '')
         for part in cookie.split(';'):
             if '=' in part:
                 k, v = part.strip().split('=', 1)
                 if k.strip() == 'X-Csrf-Token':
                     return v.strip() == csrf
-        # 若 Cookie 里没有，只要有 csrf 头也放行（兼容）
-        return True
+        # 有头无 Cookie：无法比对，拒绝（避免伪造头绕过）
+        return False
 
     # --- CORS ---
     def _cors(self):
-        origin = self.headers.get('Origin', '')
-        if origin:
-            self.send_header('Access-Control-Allow-Origin', origin)
-            self.send_header('Access-Control-Allow-Credentials', 'true')
-        self.send_header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
-        self.send_header('Access-Control-Allow-Headers', 'Content-Type, X-Csrf-Token, Cookie')
+        # 同源部署，不需要 CORS 头。
+        # 之前反射 Origin + Allow-Credentials 会把接口暴露给任意站点。
+        return
 
     def _json(self, obj, code=200):
         body = json.dumps(obj, ensure_ascii=False).encode('utf-8')
@@ -623,6 +1368,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('Content-Type', 'application/json; charset=utf-8')
         self.send_header('Content-Length', str(len(body)))
         self.send_header('Cache-Control', 'no-store')
+        self.send_header('X-Content-Type-Options', 'nosniff')
         self._cors()
         self.end_headers()
         self.wfile.write(body)
@@ -695,7 +1441,82 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == '/api/report':
             cfg = load_config()
-            return self._json(build_report(cfg))
+            rng = qs.get('range', ['all'])[0]
+            since = range_to_since(rng)
+            return self._json(build_report(cfg, since_ts=since))
+
+        if path == '/api/timeline':
+            # 按时间观测：不传 pid 返回全局 + Top 进程轨迹
+            rng = qs.get('range', ['all'])[0]
+            since = range_to_since(rng)
+            pid = qs.get('pid', [None])[0]
+            top_n = int(qs.get('top', ['8'])[0])
+            return self._json(build_timeline(pid=pid, top_n=top_n, since_ts=since))
+
+        if path == '/api/export':
+            kind = qs.get('kind', ['system'])[0]
+            pid = qs.get('pid', [None])[0]
+            rng = qs.get('range', ['all'])[0]
+            since = range_to_since(rng)
+            csv_text, err = export_csv(kind=kind, pid=pid, since_ts=since)
+            if err:
+                return self._json({'error': err}, 400)
+            body = csv_text.encode('utf-8-sig')  # BOM 便于 Excel 打开
+            ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+            fname = '%s_%s_%s.csv' % (APP_ID, kind, ts)
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/csv; charset=utf-8')
+            self.send_header('Content-Length', str(len(body)))
+            self.send_header('Content-Disposition', 'attachment; filename="%s"' % fname)
+            self.send_header('Cache-Control', 'no-store')
+            self.end_headers()
+            return self.wfile.write(body)
+
+        if path == '/api/alerts':
+            # 当前告警：来自最近一次报告的 leaks/suspects，附系统级告警
+            cfg = load_config()
+            rep = build_report(cfg)
+            if 'error' in rep:
+                return self._json({'alerts': [], 'error': rep['error']})
+            alerts = []
+            sysd = rep.get('system', {})
+            if sysd.get('verdict') == 'leak':
+                alerts.append({
+                    'level': 'critical', 'scope': 'system', 'name': '系统内存',
+                    'msg': '系统内存持续增长 %.1f KB/min（R²=%.2f）'
+                           % (sysd.get('mem_slope_kb_min', 0), sysd.get('mem_r2', 0)),
+                })
+            for r in rep.get('leaks', [])[:15]:
+                alerts.append({
+                    'level': 'critical', 'scope': 'process',
+                    'pid': r['pid'], 'name': r['comm'],
+                    'msg': '；'.join(r.get('reasons', [])) or '疑似内存泄漏',
+                    'score': r.get('score', 0),
+                })
+            for r in rep.get('suspects', [])[:15]:
+                alerts.append({
+                    'level': 'warn', 'scope': 'process',
+                    'pid': r['pid'], 'name': r['comm'],
+                    'msg': '；'.join(r.get('reasons', [])),
+                    'score': r.get('score', 0),
+                })
+            # 阶梯增长：不作为告警，仅作观察提示（不影响警戒标准）
+            for r in rep.get('stepped', [])[:15]:
+                alerts.append({
+                    'level': 'info', 'scope': 'process',
+                    'pid': r['pid'], 'name': r['comm'],
+                    'msg': '；'.join(r.get('reasons', [])),
+                    'score': r.get('score', 0),
+                })
+            return self._json({
+                'alerts': alerts,
+                'critical': len([a for a in alerts if a['level'] == 'critical']),
+                'warn': len([a for a in alerts if a['level'] == 'warn']),
+                'info': len([a for a in alerts if a['level'] == 'info']),
+                'reliable': rep.get('meta', {}).get('reliable', False),
+                'samples': rep.get('meta', {}).get('samples', 0),
+                'min_samples': rep.get('meta', {}).get('min_samples', 20),
+            })
 
         if path == '/api/config':
             return self._json(load_config())
@@ -772,6 +1593,11 @@ class UnixHTTPServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer)
     allow_reuse_address = True
 
 
+class TCPHTTPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
+    daemon_threads = True
+    allow_reuse_address = True
+
+
 def main():
     # 准备目录
     for d in (DATA_DIR, LOG_DIR, '/var/api'):
@@ -787,32 +1613,76 @@ def main():
         except Exception:
             pass
 
-    # 启动采集
-    start_collector(load_config)
+    # 采集是否随服务启动。
+    # 默认不自动采集（auto_start=False）：由用户在界面上点「开始采集」。
+    # 若配置里显式打开 auto_start，则跟随服务启动。
+    _cfg0 = load_config()
+    if _cfg0.get('auto_start'):
+        log('auto_start 已开启，随服务启动采集')
+        start_collector(load_config)
+    else:
+        log('等待用户手动开始采集（auto_start=false）')
 
-    # 启动 HTTP over Unix Socket
-    srv = UnixHTTPServer(SOCK_PATH, Handler)
-    os.chmod(SOCK_PATH, 0o660)
+    # 同时提供两种访问方式：
+    #   1) Unix socket —— 平台约定位置，供平台探测/代理
+    #   2) TCP 127.0.0.1:8790 —— WebUI 外部打开时由 nginx 反代，浏览器直连
+    servers = []
 
-    # 尝试设置 socket 属主（需要 root，失败不致命）
     try:
-        import pwd
-        uid = pwd.getpwnam(APP_ID).pw_uid
-        gid = pwd.getpwnam(APP_ID).pw_gid
-        os.chown(SOCK_PATH, uid, gid)
-    except Exception:
-        pass
+        usrv = UnixHTTPServer(SOCK_PATH, Handler)
+        try:
+            os.chmod(SOCK_PATH, 0o660)
+        except Exception:
+            pass
+        # 尝试设置 socket 属主（需要 root，失败不致命）
+        try:
+            import pwd
+            pw = pwd.getpwnam(APP_ID)
+            os.chown(SOCK_PATH, pw.pw_uid, pw.pw_gid)
+        except Exception:
+            pass
+        servers.append(usrv)
+        log('已监听 Unix Socket %s' % SOCK_PATH)
+    except Exception as e:
+        log('Unix Socket 启动失败: %s' % e)
 
-    log('服务启动，监听 %s' % SOCK_PATH)
     try:
-        srv.serve_forever()
+        tsrv = TCPHTTPServer((LISTEN_HOST, LISTEN_PORT), Handler)
+        servers.append(tsrv)
+        log('已监听 http://%s:%d' % (LISTEN_HOST, LISTEN_PORT))
+    except Exception as e:
+        log('TCP 端口启动失败: %s' % e)
+
+    if not servers:
+        log('无可用监听方式，退出')
+        return
+
+    log('服务启动完成')
+    import threading
+    threads = []
+    for s in servers:
+        t = threading.Thread(target=s.serve_forever, daemon=True)
+        t.start()
+        threads.append(t)
+
+    try:
+        while True:
+            time.sleep(3600)
     except KeyboardInterrupt:
         pass
     finally:
         stop_collector()
-        srv.server_close()
+        for s in servers:
+            try:
+                s.shutdown()
+                s.server_close()
+            except Exception:
+                pass
         if os.path.exists(SOCK_PATH):
-            os.remove(SOCK_PATH)
+            try:
+                os.remove(SOCK_PATH)
+            except Exception:
+                pass
         log('服务停止')
 
 

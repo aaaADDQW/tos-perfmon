@@ -1,14 +1,69 @@
-{
-  "en-us": {
-    "app_name": "Performance Monitor",
-    "app_desc": "System and per-process performance monitoring with memory leak detection"
-  },
-  "zh-cn": {
-    "app_name": "性能监测",
-    "app_desc": "系统与进程级性能监测，自动识别内存泄漏"
-  },
-  "zh-hk": {
-    "app_name": "效能監測",
-    "app_desc": "系統與行程級效能監測，自動識別記憶體洩漏"
-  }
-}
+[zh-cn]
+name = "性能监测"
+auth = "QA Team"
+descript = "直接从 /proc 采集系统与进程级性能指标，通过斜率分析与单调性检验自动识别内存泄漏，并以可视化面板呈现。"
+
+[zh-hk]
+name = "效能監測"
+auth = "QA Team"
+descript = "直接從 /proc 採集系統與行程級效能指標，透過斜率分析與單調性檢驗自動識別記憶體洩漏，並以視覺化面板呈現。"
+
+[en-us]
+name = "Performance Monitor"
+auth = "QA Team"
+descript = "Collects system and per-process performance metrics directly from /proc, detects memory leaks via slope analysis and monotonicity testing, and presents results in a visual dashboard."
+
+[fr-fr]
+name = "Performance Monitor"
+auth = "QA Team"
+descript = "Collecte les métriques de performance du système et des processus directement depuis /proc, détecte les fuites de mémoire par analyse de pente et test de monotonie, et présente les résultats dans un tableau de bord visuel."
+
+[de-de]
+name = "Performance Monitor"
+auth = "QA Team"
+descript = "Erfasst System- und Prozessleistungsmetriken direkt aus /proc, erkennt Speicherlecks durch Steigungsanalyse und Monotonieprüfung und stellt die Ergebnisse in einem visuellen Dashboard dar."
+
+[it-it]
+name = "Performance Monitor"
+auth = "QA Team"
+descript = "Raccoglie le metriche delle prestazioni di sistema e per processo direttamente da /proc, rileva le perdite di memoria tramite analisi della pendenza e test di monotonicità e presenta i risultati in una dashboard visuale."
+
+[es-es]
+name = "Performance Monitor"
+auth = "QA Team"
+descript = "Recopila métricas de rendimiento del sistema y por proceso directamente desde /proc, detecta fugas de memoria mediante análisis de pendiente y prueba de monotonicidad, y presenta los resultados en un panel visual."
+
+[hu-hu]
+name = "Performance Monitor"
+auth = "QA Team"
+descript = "Közvetlenül a /proc könyvtárból gyűjti a rendszer- és folyamatszintű teljesítménymutatókat, meredekségelemzéssel és monotonitásvizsgálattal észleli a memóriaszivárgást, és vizuális irányítópulton jeleníti meg az eredményeket."
+
+[ja-jp]
+name = "パフォーマンスモニター"
+auth = "QA Team"
+descript = "/proc からシステムおよびプロセス単位のパフォーマンス指標を直接収集し、傾き分析と単調性検定によりメモリリークを自動検出して、視覚的なダッシュボードで提示します。"
+
+[ko-kr]
+name = "성능 모니터"
+auth = "QA Team"
+descript = "/proc에서 시스템 및 프로세스 수준의 성능 지표를 직접 수집하고, 기울기 분석과 단조성 검정을 통해 메모리 누수를 자동으로 탐지하여 시각적 대시보드로 표시합니다."
+
+[pl-pl]
+name = "Performance Monitor"
+auth = "QA Team"
+descript = "Zbiera metryki wydajności systemu i procesów bezpośrednio z /proc, wykrywa wycieki pamięci za pomocą analizy nachylenia i testu monotoniczności oraz prezentuje wyniki na wizualnym pulpicie."
+
+[ru-ru]
+name = "Монитор производительности"
+auth = "QA Team"
+descript = "Собирает показатели производительности системы и процессов напрямую из /proc, выявляет утечки памяти с помощью анализа наклона и проверки монотонности и отображает результаты на визуальной панели."
+
+[tr-tr]
+name = "Performance Monitor"
+auth = "QA Team"
+descript = "Sistem ve süreç düzeyindeki performans ölçümlerini doğrudan /proc üzerinden toplar, eğim analizi ve monotonluk testi ile bellek sızıntılarını saptar ve sonuçları görsel bir panelde sunar."
+
+[pt-pt]
+name = "Performance Monitor"
+auth = "QA Team"
+descript = "Recolhe métricas de desempenho do sistema e por processo diretamente de /proc, deteta fugas de memória através de análise de declive e teste de monotonicidade, e apresenta os resultados num painel visual."

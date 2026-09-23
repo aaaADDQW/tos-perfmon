@@ -3,11 +3,20 @@ set -e
 
 APPID=tos-perfmon
 
+# 运行用户。
+# 平台安装时会按 config.ini.user 自动创建（对照 calendar 为 uid 10001、gid allusers）。
+# 手工 dpkg -i 调试时平台不介入，此处兜底创建，避免 systemd 报
+#   status=217/USER / Failed to determine user credentials
+# 注意用普通用户区间（非 -r 系统用户），与平台策略保持一致。
+if ! id -u $APPID > /dev/null 2>&1; then
+    useradd -m -s /bin/bash -d /home/$APPID $APPID 2>/dev/null || true
+fi
+
 # 设置可执行权限
-chmod 755 /usr/local/$APPID/bin/$APPID || true
-chmod 644 /usr/local/$APPID/config.ini || true
-chmod 644 /usr/local/$APPID/$APPID.lang || true
-chmod 644 /usr/local/$APPID/images/icons/$APPID.svg || true
+chmod 755 /usr/local/$APPID/bin/$APPID 2>/dev/null || true
+chmod 644 /usr/local/$APPID/config.ini 2>/dev/null || true
+chmod 644 /usr/local/$APPID/$APPID.lang 2>/dev/null || true
+chmod 644 /usr/local/$APPID/images/icons/$APPID.svg 2>/dev/null || true
 
 # 安装 systemd 服务
 if [ -f /usr/local/$APPID/init.d/$APPID.service ]; then
@@ -15,21 +24,54 @@ if [ -f /usr/local/$APPID/init.d/$APPID.service ]; then
     chmod 644 /etc/systemd/system/$APPID.service
 fi
 
-# 创建数据目录
+# 创建数据目录并授权。
+# 服务以 User=<appid> 运行，需对该目录可写，否则采集会报
+#   Permission denied: /var/lib/<appid>/samples.jsonl
+# 平台自动创建用户时不会代做这一步，因此这里显式处理。
 mkdir -p /var/lib/$APPID /var/log/$APPID
-
-# 先解压 WebUI
-if [ -f /usr/local/$APPID/webui.bz2 ]; then
-    cd /usr/local/$APPID
-    tar -xjf webui.bz2 2>/dev/null || true
-    rm -f webui.bz2
+if id -u $APPID > /dev/null 2>&1; then
+    chown -R $APPID:$APPID /var/lib/$APPID /var/log/$APPID 2>/dev/null || true
+else
+    # 平台尚未建用户（例如手工调试），放宽到运行期可写
+    chmod 777 /var/lib/$APPID /var/log/$APPID 2>/dev/null || true
 fi
 
-# 统一设置属主（放在解压之后，确保所有文件都被覆盖）
-if id -u $APPID > /dev/null 2>&1; then
-    chown -R $APPID:$APPID /var/lib/$APPID 2>/dev/null || true
-    chown -R $APPID:$APPID /var/log/$APPID 2>/dev/null || true
-    chown -R $APPID:$APPID /usr/local/$APPID 2>/dev/null || true
+# 解压 WebUI 到 /usr/local/<appid>/webui/
+# webui.bz2 内部保留 webui/ 这一层，解到应用根目录即得到
+# /usr/local/<appid>/webui/index.html —— 平台约定的前端入口位置。
+# 平台自身也会解压（对照 calendar 属主为运行平台用户），这里先解好以便本地调试。
+if [ -f /usr/local/$APPID/webui.bz2 ]; then
+    rm -rf /usr/local/$APPID/webui
+    tar -xjf /usr/local/$APPID/webui.bz2 -C /usr/local/$APPID 2>/dev/null || true
+fi
+
+# 建立 /usr/www/<appid> -> 应用 webui 目录的软链。
+# nginx 的 root 是 /usr/www/，平台应用（calendar/docker/MultimediaServer）
+# 都以此方式暴露前端静态资源。装到 /usr/local 后必须补这条软链，
+# 否则 nginx alias/try_files 找不到 index.html。
+if [ -d /usr/local/$APPID/webui ]; then
+    rm -rf /usr/www/$APPID
+    ln -sfn /usr/local/$APPID/webui /usr/www/$APPID
+    # 图标也要能被 /images/icons/<id>.svg 访问
+    mkdir -p /usr/www/images/icons
+    ln -sfn /usr/local/$APPID/images/icons/$APPID.svg /usr/www/images/icons/$APPID.svg 2>/dev/null || true
+fi
+
+# nginx 路由配置。
+# nginx.conf 的 server 块中 include conf.d/*.conf，故放到该目录即可生效。
+# ⚠️ 必须用 ^~ 前缀匹配抢在 nginx-extend.conf 的
+#      location ~ ^/tos(/.*)? { proxy_pass ...:5050/tos$1; }
+#    之前命中，否则 /tos-perfmon/ 会被转给 TOSDaemon 并 301 到 /tos/（套娃）。
+# 窗口外壳（关闭/最小化/最大化/拖拽）由前端依据 config.ini 渲染，不受影响。
+if [ -f /usr/local/$APPID/nginx/$APPID.conf ]; then
+    cp -f /usr/local/$APPID/nginx/$APPID.conf /etc/nginx/conf.d/$APPID-app.conf
+    chmod 644 /etc/nginx/conf.d/$APPID-app.conf
+    if nginx -t > /dev/null 2>&1; then
+        # 用 restart 而非 reload：reload 在部分 worker 卡住时不会切换新配置
+        systemctl restart nginx 2>/dev/null || systemctl reload nginx 2>/dev/null || true
+    else
+        rm -f /etc/nginx/conf.d/$APPID-app.conf
+    fi
 fi
 
 systemctl daemon-reload 2>/dev/null || true

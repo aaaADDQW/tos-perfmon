@@ -77,6 +77,10 @@ section{margin-bottom:20px}
 .b-sus{background:rgba(210,153,34,.16);color:var(--yellow);border:1px solid rgba(210,153,34,.32)}
 .b-ok{background:rgba(63,185,80,.14);color:var(--green);border:1px solid rgba(63,185,80,.3)}
 .b-type{background:var(--panel2);color:var(--dim);border:1px solid var(--border)}
+.b-step{background:rgba(88,166,255,.14);color:var(--blue);border:1px solid rgba(88,166,255,.32)}
+.b-start{background:rgba(188,140,255,.14);color:var(--purple);border:1px solid rgba(188,140,255,.32)}
+.b-noisy{background:rgba(110,118,129,.16);color:var(--mute);border:1px solid rgba(110,118,129,.32)}
+.b-insuf{background:rgba(110,118,129,.10);color:var(--mute);border:1px solid rgba(110,118,129,.22)}
 
 /* 表格 */
 table{width:100%;border-collapse:collapse;font-size:12px}
@@ -166,108 +170,448 @@ details .bd{padding:0 16px 14px;max-height:520px;overflow:auto}
   border-radius:5px;padding:4px 9px;width:110px;font-size:12px;font-family:inherit;
   font-variant-numeric:tabular-nums}
 .cfg-row input:focus{outline:none;border-color:var(--blue)}
+
+/* 时间范围选择器 */
+select{background:var(--panel2);color:var(--text);border:1px solid var(--border);
+  border-radius:6px;padding:6px 10px;font-size:12px;font-family:inherit;cursor:pointer;
+  transition:all .15s}
+select:hover{background:#22272e;border-color:#484f58}
+select:focus{outline:none;border-color:var(--blue)}
+
+/* 告警条 */
+#alertBar{margin-bottom:16px}
+.alert{padding:10px 14px;border-radius:8px;margin-bottom:8px;font-size:12.5px;
+  border:1px solid;display:flex;align-items:flex-start;gap:10px;line-height:1.5}
+.alert.crit{background:rgba(248,81,73,.10);border-color:rgba(248,81,73,.45);color:#ffb3ae}
+.alert.warn{background:rgba(210,153,34,.10);border-color:rgba(210,153,34,.45);color:#ffd894}
+.alert.info{background:rgba(88,166,255,.10);border-color:rgba(88,166,255,.40);color:#a8d0ff}
+.alert .ico{flex-shrink:0;font-size:14px;line-height:1.35}
+.alert .body{flex:1;min-width:0}
+.alert b{color:#fff;font-weight:600}
+/* 可跳转的告警：整条可点，右侧出现「查看进程 ›」提示 */
+.alert.clickable{cursor:pointer;transition:background .12s,border-color .12s}
+.alert.clickable:hover{background:rgba(88,166,255,.10);border-color:rgba(88,166,255,.5)}
+.alert .go{flex-shrink:0;font-size:11px;color:var(--blue);opacity:0;
+  transition:opacity .12s;white-space:nowrap;align-self:center}
+.alert.clickable:hover .go{opacity:1}
+
+/* 数据不足提示 */
+.notice{padding:12px 16px;border-radius:8px;background:var(--panel);
+  border:1px dashed var(--border);color:var(--dim);font-size:12.5px;
+  display:flex;align-items:center;gap:10px;margin-bottom:16px}
+.notice b{color:var(--yellow)}
+
+/* 弹窗 */
+/* 注意：这里刻意不用 backdrop-filter / filter / transform。
+   它们会创建新的层叠上下文与包含块，在被平台嵌入 iframe（且父容器带动画）
+   时会导致鼠标命中测试错位 —— 表现为标题栏按钮点不动。
+   遮罩改用纯半透明背景色，效果接近且无副作用。 */
+.modal-wrap{position:fixed;top:0;left:0;right:0;bottom:0;
+  background:rgba(1,4,9,.82);z-index:9000;
+  display:flex;align-items:center;justify-content:center;padding:24px;
+  box-sizing:border-box}
+.modal{background:var(--panel);border:1px solid var(--border);border-radius:12px;
+  width:min(1280px,96vw);max-height:calc(100vh - 48px);display:flex;flex-direction:column;
+  box-shadow:0 20px 60px rgba(0,0,0,.6);overflow:hidden}
+.modal-head{display:flex;align-items:center;justify-content:space-between;gap:14px;
+  padding:14px 18px;border-bottom:1px solid var(--border);flex-wrap:wrap;
+  flex-shrink:0;position:relative;z-index:2}
+.modal-head-right{display:flex;align-items:center;gap:8px;flex-wrap:wrap;position:relative;z-index:3}
+.modal-title{font-size:15px;font-weight:600}
+.modal-sub{font-size:11.5px;color:var(--dim);margin-top:3px}
+.modal-body{padding:16px 18px;overflow:auto;flex:1;min-height:0;position:relative;z-index:1}
+
+/* 可点击的进程行 */
+tr.clickable{cursor:pointer;transition:background .12s}
+tr.clickable:hover{background:#1f2630}
+.proc-link{color:var(--blue);border-bottom:1px dotted rgba(88,166,255,.6)}
+
+/* 弹窗内指标格 */
+.pm-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(148px,1fr));
+  gap:10px;margin-bottom:16px}
+.pm-cell{background:var(--panel2);border:1px solid var(--border);border-radius:8px;padding:10px 12px}
+.pm-cell .k{font-size:10.5px;color:var(--dim);text-transform:uppercase;letter-spacing:.4px}
+.pm-cell .v{font-size:17px;font-weight:600;margin-top:4px;font-variant-numeric:tabular-nums}
+.pm-sec{font-size:11.5px;font-weight:600;color:var(--dim);margin:18px 0 8px;
+  text-transform:uppercase;letter-spacing:.5px}
+
+/* ===== 顶部操作栏 ===== */
+.brandbar{display:flex;align-items:center;gap:10px;padding:12px 2px 10px}
+.brandbar .title{font-size:17px;font-weight:600;letter-spacing:-.2px}
+.topbar{display:flex;align-items:center;justify-content:space-between;gap:12px;
+  padding:10px 14px;background:var(--panel);border:1px solid var(--border);
+  border-radius:10px;margin-bottom:12px;flex-wrap:wrap}
+.topbar-right{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.status-inline{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--dim)}
+
+/* ===== Tab 导航 ===== */
+.tabs{display:flex;gap:2px;border-bottom:1px solid var(--border);margin-bottom:18px;
+  overflow-x:auto}
+.tab{padding:9px 18px;font-size:13px;color:var(--dim);cursor:pointer;
+  border-bottom:2px solid transparent;white-space:nowrap;transition:all .15s;
+  display:flex;align-items:center;gap:6px;user-select:none}
+.tab:hover{color:var(--text);background:rgba(255,255,255,.03)}
+.tab.active{color:var(--blue);border-bottom-color:var(--blue);font-weight:600}
+.tab-badge{background:var(--red);color:#fff;font-size:10px;font-weight:700;
+  border-radius:9px;padding:1px 6px;min-width:16px;text-align:center;line-height:1.5}
+
+/* ===== Tab 面板 ===== */
+.tabpane{display:none}
+.tabpane.active{display:block}
+
+/* 面板工具条 */
+.pane-toolbar{display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap}
+.muted{color:var(--dim);font-size:12px}
+.searchbox{background:var(--bg);border:1px solid var(--border);color:var(--text);
+  border-radius:6px;padding:7px 12px;font-size:12.5px;font-family:inherit;min-width:240px}
+.searchbox:focus{outline:none;border-color:var(--blue)}
+.checkline{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--dim);cursor:pointer}
+.checkline input{width:auto}
+
+/* 告警列表项 */
+.alert-item{display:flex;align-items:flex-start;gap:12px;padding:12px 14px;
+  border-radius:8px;border:1px solid var(--border);background:var(--panel);
+  margin-bottom:8px}
+.alert-item.crit{border-left:3px solid var(--red)}
+.alert-item.warn{border-left:3px solid var(--yellow)}
+.alert-item.info{border-left:3px solid var(--blue)}
+.alert-item .ai-main{flex:1;min-width:0}
+.alert-item .ai-name{font-weight:600;font-size:13px;margin-bottom:4px}
+.alert-item .ai-msg{font-size:12px;color:var(--dim);line-height:1.55}
+.alert-item .ai-side{font-size:11px;color:var(--mute);text-align:right;flex-shrink:0}
+/* 可跳转的告警项 */
+.alert-item.clickable{cursor:pointer;transition:background .12s,border-color .12s}
+.alert-item.clickable:hover{background:#1f2630;border-color:#484f58}
+.alert-item .go{font-size:10.5px;color:var(--blue);margin-top:3px;
+  opacity:0;transition:opacity .12s;white-space:nowrap}
+.alert-item.clickable:hover .go{opacity:1}
+
+/* ===== 图表交互（十字准线 + 数据气泡） ===== */
+.chartbox{position:relative}
+.chartbox svg{width:100%;display:block}
+.chartbox .cl{stroke-width:1.8;stroke-linejoin:round;stroke-linecap:round;
+  vector-effect:non-scaling-stroke}
+.chartbox .ar{opacity:.12}
+.chartbox .gl{stroke:var(--border);stroke-width:1;opacity:.55;vector-effect:non-scaling-stroke}
+.chartbox .at{fill:var(--mute);font-size:10px;font-family:inherit}
+.chartbox .crosshair .chline{stroke:var(--dim);stroke-width:1;stroke-dasharray:4,3;
+  opacity:.85;vector-effect:non-scaling-stroke}
+.chartbox .chdot{filter:drop-shadow(0 0 3px rgba(0,0,0,.6))}
+
+/* 悬停气泡 */
+.chpop{position:absolute;z-index:50;pointer-events:none;
+  background:rgba(13,17,23,.97);border:1px solid var(--border);border-radius:8px;
+  padding:9px 12px;font-size:11.5px;line-height:1.7;min-width:150px;
+  box-shadow:0 8px 24px rgba(0,0,0,.6)}
+.chpop-t{color:var(--dim);font-size:10.5px;margin-bottom:5px;padding-bottom:5px;
+  border-bottom:1px solid rgba(48,54,61,.7);font-variant-numeric:tabular-nums}
+.chpop-r{display:flex;align-items:center;justify-content:space-between;gap:14px}
+.chpop-k{color:var(--dim);display:flex;align-items:center;gap:6px}
+.chpop-k i{width:7px;height:7px;border-radius:50%;display:inline-block;flex-shrink:0}
+.chpop-v{font-weight:600;color:var(--text);font-variant-numeric:tabular-nums}
+
+/* ===================================================================
+   ==== 进程页 主从布局（方案 A 紧凑表 + 方案 B 右侧详情）==========
+   ===================================================================
+   左：紧凑列表（无表头、行高极小、每行一根 2px 占比细线）
+   右：选中进程的详情（大趋势图 + 指标格）
+   两个面板各自独立滚动，整体高度锁定在视口内。
+   注意：这里同样避免 filter/transform，防止 iframe 内命中错位。 */
+
+.proc-split{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(320px,0.95fr);
+  gap:12px;align-items:start;
+  --split-h:min(72vh,760px)}
+@media(max-width:1100px){
+  .proc-split{grid-template-columns:1fr;--split-h:auto}
+  /* 窄屏上下堆叠时，列表限高，详情改为自适应高度 */
+  .plist{height:min(46vh,420px)}
+  .pdetail{max-height:none}
+}
+
+/* ---- 左：紧凑列表 ---- */
+/* 高度由 .proc-split 上的 --split-h 统一控制（见上文），两边严格等高。 */
+.plist{background:var(--panel);border:1px solid var(--border);border-radius:8px;
+  overflow:hidden;display:flex;flex-direction:column;height:var(--split-h)}
+.plist-head{display:flex;align-items:center;gap:8px;padding:9px 12px;
+  border-bottom:1px solid var(--border);flex-wrap:wrap;flex-shrink:0}
+.plist-head .psearch{flex:1;min-width:150px;background:var(--bg);
+  border:1px solid var(--border);color:var(--text);border-radius:6px;
+  padding:5px 10px;font-size:12px;font-family:inherit}
+.plist-head .psearch:focus{outline:none;border-color:var(--blue)}
+.plist-head .pcount{font-size:11px;color:var(--mute);white-space:nowrap}
+.plist-body{overflow:auto;flex:1;min-height:0}
+
+/* 排序按钮组：与搜索框同行，不占额外行高。
+   每个维度一个按钮，点击在「降序 → 升序」间切换。 */
+.sortbar{display:flex;align-items:center;gap:2px;flex-shrink:0;
+  background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:2px}
+.sortbar button{background:transparent;border:none;color:var(--dim);
+  padding:3px 8px;font-size:11.5px;border-radius:4px;cursor:pointer;
+  display:inline-flex;align-items:center;gap:3px;line-height:1.4}
+.sortbar button:hover{background:var(--panel2);color:var(--text)}
+.sortbar button.on{background:rgba(88,166,255,.16);color:var(--blue);font-weight:600}
+.sortbar button .arw{font-size:9px;opacity:.9}
+
+/* 行：名称 + 数值 + 底部 2px 细线 */
+.pl-row{position:relative;display:flex;align-items:center;gap:10px;
+  padding:5px 12px 8px;cursor:pointer;border-bottom:1px solid rgba(48,54,61,.3);
+  transition:background .1s}
+.pl-row:hover{background:#1f2630}
+.pl-row.sel{background:rgba(88,166,255,.10)}
+.pl-row.sel::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;
+  background:var(--blue)}
+.pl-row .pl-nm{flex:1;min-width:0;display:flex;align-items:baseline;gap:7px;
+  overflow:hidden;white-space:nowrap}
+.pl-row .pl-name{font-size:12.5px;font-weight:500;overflow:hidden;
+  text-overflow:ellipsis;flex-shrink:1}
+.pl-row .pl-pid{font-size:10px;color:var(--mute);
+  font-family:ui-monospace,Menlo,Consolas,monospace;flex-shrink:0}
+.pl-row .pl-val{font-size:12px;font-variant-numeric:tabular-nums;
+  white-space:nowrap;flex-shrink:0;min-width:66px;text-align:right}
+.pl-row .pl-slope{font-size:11px;font-variant-numeric:tabular-nums;
+  white-space:nowrap;flex-shrink:0;min-width:54px;text-align:right;
+  padding-right:4px;border-right:1px solid rgba(48,54,61,.55);margin-right:2px}
+/* 2px 占比细线：贴行底部，替代原来的独立进度条列 */
+.pl-row .pl-meter{position:absolute;left:0;bottom:0;height:2px;
+  border-radius:0 2px 2px 0;transition:width .3s}
+
+/* ---- 右：详情面板 ---- */
+/* 与左侧列表严格等高（共用 --split-h），内部独立滚动 */
+.pdetail{background:var(--panel);border:1px solid var(--border);border-radius:8px;
+  overflow:hidden;position:relative;height:var(--split-h);
+  display:flex;flex-direction:column}
+.pdetail-empty{display:flex;flex-direction:column;align-items:center;
+  justify-content:center;gap:8px;padding:60px 20px;color:var(--mute);text-align:center}
+.pdetail-empty .ic{font-size:28px;opacity:.4}
+.pd-head{padding:11px 14px;border-bottom:1px solid var(--border);flex-shrink:0}
+.pd-title{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.pd-title .nm{font-size:14.5px;font-weight:600}
+.pd-title .pid{font-size:10.5px;color:var(--mute);
+  font-family:ui-monospace,Menlo,Consolas,monospace;
+  background:var(--panel2);padding:1px 6px;border-radius:4px}
+.pd-exe{font-size:10.5px;color:var(--mute);margin-top:4px;
+  font-family:ui-monospace,Menlo,Consolas,monospace;word-break:break-all}
+.pd-body{padding:12px 14px;overflow:auto;flex:1;min-height:0}
+.pd-sec{font-size:11px;color:var(--dim);margin:14px 0 7px;
+  text-transform:uppercase;letter-spacing:.5px;font-weight:600}
+.pd-sec:first-child{margin-top:0}
+
+/* 详情指标格：两列紧凑 */
+.pd-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:1px;
+  background:var(--border);border:1px solid var(--border);border-radius:7px;
+  overflow:hidden}
+.pd-cell{background:var(--panel);padding:7px 10px}
+.pd-cell .k{font-size:10px;color:var(--mute);text-transform:uppercase;
+  letter-spacing:.3px;margin-bottom:2px}
+.pd-cell .v{font-size:13.5px;font-weight:600;font-variant-numeric:tabular-nums;
+  line-height:1.2}
+.pd-cell .u{font-size:10px;color:var(--mute);font-weight:400;margin-left:3px}
+.pd-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;
+  padding-top:10px;border-top:1px solid var(--border);flex-shrink:0}
+.pd-actions button{padding:5px 12px;font-size:11.5px}
+
+/* 详情头部的操作按钮：靠右与标题同行 */
+.pd-tools{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+.pd-tools button{padding:3px 10px;font-size:11px}
+
+/* ---- 判定标签：去填充改描边（降视觉噪音）---- */
+/* 原 badge 是实心色块，一屏几十个时非常吵。
+   进程页统一改用 .pill：深底 + 左侧色条 + 同色描边。
+   色条用 3px 且不透明，保证在深色背景上可辨。 */
+.pill{display:inline-flex;align-items:center;font-size:10.5px;
+  padding:1px 7px 1px 7px;border-radius:4px;white-space:nowrap;
+  background:var(--panel2);border:1px solid var(--border);
+  border-left-width:3px;font-weight:500;line-height:1.5}
+.pill.p-leak{border-left-color:var(--red);border-color:rgba(248,81,73,.35);
+  color:#ff9d96;background:rgba(248,81,73,.10)}
+.pill.p-suspect{border-left-color:var(--yellow);border-color:rgba(210,153,34,.35);
+  color:#e8c069;background:rgba(210,153,34,.10)}
+.pill.p-ok{border-left-color:var(--green);border-color:rgba(63,185,80,.28);color:#7ee08a}
+.pill.p-stepped{border-left-color:var(--blue);border-color:rgba(88,166,255,.35);
+  color:#8fc2ff;background:rgba(88,166,255,.10)}
+.pill.p-startup{border-left-color:var(--purple);border-color:rgba(188,140,255,.32);
+  color:#cfaeff;background:rgba(188,140,255,.10)}
+.pill.p-noisy{border-left-color:var(--mute);color:var(--mute)}
+.pill.p-insufficient{border-left-color:#3d444d;color:var(--mute)}
+
+/* ---- 内存构成堆叠条 ---- */
+.mstack{height:8px;border-radius:4px;overflow:hidden;display:flex;
+  background:var(--panel2);margin-bottom:8px}
+.mstack i{display:block;height:100%;transition:width .3s}
+.mlegend{display:flex;gap:14px;flex-wrap:wrap;font-size:11px;color:var(--dim)}
+.mlegend span{display:flex;align-items:center;gap:5px}
+.mlegend em{width:8px;height:8px;border-radius:2px;display:inline-block;
+  font-style:normal;flex-shrink:0}
+.mlegend b{color:var(--text);font-weight:600;font-variant-numeric:tabular-nums}
+
+/* ---- 概览页 KPI 卡内的迷你图 ---- */
+.kpi-spark{margin-top:6px;height:26px}
+.kpi-spark svg{width:100%;height:26px;display:block;overflow:visible}
+
+/* ---- 条形列表（Top 写盘 / 告警速览等）---- */
+.barlist{font-size:11.5px}
+.barlist .bl-row{display:flex;align-items:center;gap:8px;padding:4px 0}
+.barlist .bl-nm{width:96px;flex-shrink:0;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap;color:var(--dim)}
+.barlist .bl-bar{flex:1;height:5px;background:var(--panel2);
+  border-radius:3px;overflow:hidden}
+.barlist .bl-bar i{display:block;height:100%;border-radius:3px}
+.barlist .bl-v{width:62px;text-align:right;flex-shrink:0;
+  font-variant-numeric:tabular-nums;color:var(--text)}
+
+/* ---- KPI 五连卡（概览页顶部）---- */
+/* 用 auto-fit + minmax 让它自然流动：窄了自动折成 3/2 列，不会出现
+   "3 张卡 + 半行空白"的残缺布局。 */
+.g5{grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+@media(max-width:680px){.g5{grid-template-columns:1fr 1fr}}
+.card.tight{padding:11px 13px}
+.card.tight .kpi-v{font-size:21px}
+.card.tight .kpi-l{margin-bottom:4px}
 </style>
 </head>
 <body>
 <div class="wrap">
 
-<div class="top">
-  <div class="brand">
-    <img class="logo" src="static/icon.svg" alt="" onerror="this.style.display='none'">
-    <div>
-      <div class="title">性能监测 <small id="statusText">加载中…</small></div>
-    </div>
-  </div>
-  <div class="controls">
+<div class="brandbar">
+  <img class="logo" src="static/icon.svg" alt="" onerror="this.style.display='none'">
+  <div class="title">性能监测</div>
+</div>
+
+<!-- 顶部操作栏 -->
+<div class="topbar">
+  <div class="status-inline">
     <span id="stateDot" class="dot off"></span>
+    <span id="statusText">加载中…</span>
+  </div>
+  <div class="topbar-right">
+    <select id="rangeSel" title="观测时间范围">
+      <option value="10m">近 10 分钟</option>
+      <option value="30m">近 30 分钟</option>
+      <option value="1h" selected>近 1 小时</option>
+      <option value="3h">近 3 小时</option>
+      <option value="6h">近 6 小时</option>
+      <option value="12h">近 12 小时</option>
+      <option value="1d">近 1 天</option>
+      <option value="3d">近 3 天</option>
+      <option value="7d">近 7 天</option>
+      <option value="all">全部</option>
+    </select>
     <button id="btnStart" class="primary">▶ 开始采集</button>
     <button id="btnStop">■ 停止</button>
-    <button id="btnRefresh">⟳ 分析</button>
-    <button id="btnClear" class="danger">清空数据</button>
-    <button id="btnCfg">⚙ 设置</button>
+    <button id="btnRefresh">⟳ 刷新</button>
+    <button id="btnQuickExport" title="导出当前时间范围的系统时间线">⤓ 导出</button>
   </div>
 </div>
 
-<!-- 运行状态 -->
-<div class="grid g4" id="kpis">
-  <div class="card"><div class="kpi-l">状态</div><div class="loading"><div class="spin"></div>连接中…</div></div>
+<!-- Tab 导航 -->
+<div class="tabs" id="tabs">
+  <div class="tab active" data-tab="overview">概览</div>
+  <div class="tab" data-tab="procs">进程</div>
+  <div class="tab" data-tab="timeline">时间线</div>
+  <div class="tab" data-tab="alerts">告警<span class="tab-badge" id="alertBadge" style="display:none">0</span></div>
+  <div class="tab" data-tab="settings">设置</div>
 </div>
 
-<!-- 配置面板 -->
-<div id="cfgPanel" style="display:none" class="card" style="margin-bottom:18px">
-  <div class="kpi-l" style="margin-bottom:10px">采集配置</div>
-  <div class="cfg-row"><label>采样间隔（秒）</label><input id="cfgInterval" type="number" min="2" max="3600"></div>
-  <div class="cfg-row"><label>最大样本数</label><input id="cfgMax" type="number" min="100" max="500000"></div>
-  <div class="cfg-row"><label>RSS 斜率警戒 (KB/分)</label><input id="cfgWarn" type="number" min="1" step="1"></div>
-  <div class="cfg-row"><label>RSS 斜率临界 (KB/分)</label><input id="cfgCrit" type="number" min="1" step="1"></div>
-  <div style="margin-top:12px;display:flex;gap:8px">
-    <button class="primary" id="btnCfgSave">保存</button>
-    <button id="btnCfgClose">关闭</button>
-  </div>
-</div>
+<!-- 告警条 -->
+<div id="alertBar" style="display:none"></div>
 
-<!-- 系统趋势 -->
-<section id="secTrend" style="display:none">
-  <h2><span class="bar"></span>系统级趋势</h2>
-  <div class="chart">
-    <div class="ct"><span>内存占用</span><span id="memRange" class="mono"></span></div>
-    <div id="chartMem"></div>
+<!-- ============ Tab: 概览 ============ -->
+<div class="tabpane active" id="pane-overview">
+  <div class="grid g5" id="kpis">
+    <div class="card tight" style="grid-column:1/-1"><div class="loading"><div class="spin"></div>连接中…</div></div>
   </div>
-  <div class="grid g2">
+
+  <!-- 内存构成 + 采集概况：一屏交代系统内存去哪了 -->
+  <section id="secMemBreak" style="display:none">
+    <div class="grid g2">
+      <div class="chart">
+        <div class="ct"><span>系统内存构成</span><span id="memBreakSub" class="mono"></span></div>
+        <div class="mstack" id="memStack"></div>
+        <div class="mlegend" id="memLegend"></div>
+      </div>
+      <div class="chart">
+        <div class="ct"><span>Swap / 内核占用</span></div>
+        <div class="mstack" id="swapStack"></div>
+        <div class="mlegend" id="swapLegend"></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="secTrend" style="display:none">
+    <h2><span class="bar"></span>系统级趋势</h2>
     <div class="chart">
-      <div class="ct"><span>内核 Slab（不可回收）</span></div>
-      <div id="chartSlab"></div>
+      <div class="ct"><span>内存占用</span><span id="memRange" class="mono"></span></div>
+      <div id="chartMem"></div>
     </div>
-    <div class="chart">
-      <div class="ct"><span>系统负载</span></div>
-      <div id="chartLoad"></div>
+    <div class="grid g2">
+      <div class="chart">
+        <div class="ct"><span>内核 Slab（不可回收）</span></div>
+        <div id="chartSlab"></div>
+      </div>
+      <div class="chart">
+        <div class="ct"><span>系统负载</span></div>
+        <div id="chartLoad"></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="secLeaks" style="display:none">
+    <h2><span class="bar" style="background:var(--red)"></span>判定泄漏 <span class="cnt" id="leakCnt">0</span></h2>
+    <div id="leakList"></div>
+  </section>
+
+  <section id="secSus" style="display:none">
+    <h2><span class="bar" style="background:var(--yellow)"></span>疑似泄漏 <span class="cnt" id="susCnt">0</span></h2>
+    <div id="susList"></div>
+  </section>
+</div>
+
+<!-- ============ Tab: 进程 ============ -->
+<div class="tabpane" id="pane-procs">
+  <!-- 主从布局：左侧紧凑列表（扫视全局），右侧详情（看趋势形状） -->
+  <div class="proc-split">
+
+    <!-- 左：进程列表 -->
+    <div class="plist">
+      <div class="plist-head">
+        <input id="procSearch" type="text" placeholder="搜索进程名 / PID…" class="psearch">
+        <div class="sortbar" id="sortBar">
+          <button data-sort="rss"    title="按当前内存占用排序">占用<span class="arw"></span></button>
+          <button data-sort="growth" title="按内存增长率排序">增长率<span class="arw"></span></button>
+          <button data-sort="name"   title="按进程名排序">名称<span class="arw"></span></button>
+        </div>
+        <span class="pcount" id="procCount">—</span>
+      </div>
+      <div class="plist-body" id="procListBody">
+        <div class="loading"><div class="spin"></div>加载中…</div>
+      </div>
+    </div>
+
+    <!-- 右：详情面板 -->
+    <div class="pdetail" id="procDetail">
+      <div class="pdetail-empty" id="pdEmpty">
+        <div class="ic">👈</div>
+        <div>点击左侧进程查看详情</div>
+        <div style="font-size:11px;color:var(--mute)">趋势形状是判定泄漏的关键依据</div>
+      </div>
+      <div id="pdContent" style="display:none;flex-direction:column;min-height:0"></div>
     </div>
   </div>
-</section>
 
-<!-- 泄漏 -->
-<section id="secLeaks" style="display:none">
-  <h2><span class="bar" style="background:var(--red)"></span>判定泄漏 <span class="cnt" id="leakCnt">0</span></h2>
-  <div id="leakList"></div>
-</section>
-
-<!-- 疑似 -->
-<section id="secSus" style="display:none">
-  <h2><span class="bar" style="background:var(--yellow)"></span>疑似泄漏 <span class="cnt" id="susCnt">0</span></h2>
-  <div id="susList"></div>
-</section>
-
-<!-- 排行 -->
-<section id="secTop" style="display:none">
-  <h2><span class="bar" style="background:var(--cyan)"></span>内存占用排行</h2>
-  <div class="card" style="padding:0;overflow:hidden">
-    <div style="max-height:420px;overflow:auto">
-      <table><thead><tr>
-        <th style="width:30px">#</th><th>进程</th>
-        <th class="num">当前内存</th><th class="num">占比</th>
-        <th style="width:130px">分布</th>
-        <th class="num">斜率 KB/h</th><th>判定</th>
-      </tr></thead><tbody id="topMem"></tbody></table>
-    </div>
-  </div>
-</section>
-
-<section id="secGrowth" style="display:none">
-  <h2><span class="bar" style="background:var(--orange)"></span>增长最快</h2>
-  <div class="card" style="padding:0;overflow:hidden">
-    <div style="max-height:420px;overflow:auto">
+  <!-- 保留：增长最快 / 全部进程（折叠在下方，需要时展开） -->
+  <details id="secGrowth" style="display:none;margin-top:16px">
+    <summary><span class="bar" style="width:3px;height:14px;background:var(--orange);border-radius:2px;display:inline-block"></span>增长最快（按净增排序）</summary>
+    <div class="bd">
       <table><thead><tr>
         <th style="width:30px">#</th><th>进程</th>
         <th class="num">起点</th><th class="num">终点</th><th class="num">净增</th>
         <th class="num">斜率 KB/h</th><th class="num">单调性</th><th>判定</th>
       </tr></thead><tbody id="topGrow"></tbody></table>
     </div>
-  </div>
-</section>
+  </details>
 
-<section id="secAll" style="display:none">
-  <details>
-    <summary>全部进程明细 <span class="cnt" id="allCnt">0</span></summary>
+  <details id="secAll" style="display:none;margin-top:10px">
+    <summary><span class="bar" style="width:3px;height:14px;background:var(--blue);border-radius:2px;display:inline-block"></span>全部进程明细 <span class="cnt" id="allCnt">0</span></summary>
     <div class="bd">
       <table><thead><tr>
         <th>进程</th><th class="num">PID</th><th class="num">RSS</th><th class="num">Anon</th>
@@ -276,39 +620,120 @@ details .bd{padding:0 16px 14px;max-height:520px;overflow:auto}
       </tr></thead><tbody id="allBody"></tbody></table>
     </div>
   </details>
-</section>
+</div>
+
+<!-- ============ Tab: 时间线 ============ -->
+<div class="tabpane" id="pane-timeline">
+  <div class="pane-toolbar">
+    <label class="muted">观测对象</label>
+    <select id="tlProcSel" style="min-width:280px"></select>
+    <button id="tlRefresh">⟳ 加载</button>
+    <span class="muted" id="tlMeta"></span>
+  </div>
+  <div id="tlBody"><div class="empty"><div class="ic">📈</div><div>选择进程后加载时间线</div></div></div>
+</div>
+
+<!-- ============ Tab: 告警 ============ -->
+<div class="tabpane" id="pane-alerts">
+  <div class="pane-toolbar">
+    <label class="checkline"><input type="checkbox" id="alertOnlyCrit"> 只看严重</label>
+    <button id="alertRefresh">⟳ 刷新</button>
+    <span class="muted" id="alertMeta"></span>
+  </div>
+  <div id="alertList"></div>
+</div>
+
+<!-- ============ Tab: 设置 ============ -->
+<div class="tabpane" id="pane-settings">
+  <div class="card">
+    <div class="kpi-l" style="margin-bottom:12px">采集配置</div>
+    <div class="cfg-row"><label>采样间隔（秒）</label><input id="cfgInterval" type="number" min="2" max="3600"></div>
+    <div class="cfg-row"><label>数据保留（小时）</label><input id="cfgRetention" type="number" min="1" max="8760"></div>
+    <div class="cfg-row"><label>最大样本数</label><input id="cfgMax" type="number" min="100" max="2000000"></div>
+    <div class="cfg-row"><label>服务启动时自动采集</label><input id="cfgAutoStart" type="checkbox" style="width:auto"></div>
+    <div class="cfg-row"><label>记录告警日志</label><input id="cfgAlerts" type="checkbox" style="width:auto"></div>
+    <div class="kpi-l" style="margin:18px 0 12px">界面</div>
+    <div class="cfg-row"><label>自动刷新数据<span class="muted" style="margin-left:8px;font-size:11px">（默认开启）</span></label><input id="cfgAutoRefresh" type="checkbox" style="width:auto"></div>
+    <div class="cfg-row"><label>刷新间隔</label><span class="mono" id="dataRefreshInterval">—</span></div>
+    <div class="kpi-l" style="margin:18px 0 12px">判定阈值</div>
+    <div class="cfg-row"><label>RSS 斜率警戒 (KB/分)</label><input id="cfgWarn" type="number" min="1" step="1"></div>
+    <div class="cfg-row"><label>RSS 斜率临界 (KB/分)</label><input id="cfgCrit" type="number" min="1" step="1"></div>
+    <div style="margin-top:16px;display:flex;gap:8px">
+      <button class="primary" id="btnCfgSave">保存配置</button>
+      <button id="btnCfgReload">重新载入</button>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <div class="kpi-l" style="margin-bottom:12px">数据管理</div>
+    <div class="cfg-row"><label>当前数据量</label><span class="mono" id="dataSize">-</span></div>
+    <div class="cfg-row"><label>样本数</label><span class="mono" id="dataSamples">-</span></div>
+    <div class="cfg-row"><label>采集起始</label><span class="mono" id="dataStart">-</span></div>
+    <div class="cfg-row"><label>最近采样</label><span class="mono" id="dataLast">-</span></div>
+    <div class="cfg-row"><label>实际采集周期</label><span class="mono" id="dataInterval">-</span></div>
+    <div style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap">
+      <button id="btnExportSys">⤓ 导出系统时间线 CSV</button>
+      <button id="btnExportProc">⤓ 导出进程明细 CSV</button>
+      <button class="danger" id="btnClear">清空数据</button>
+    </div>
+  </div>
+</div>
+</div>
 
 <div id="toast"></div>
+
+<!-- 进程详情弹窗（时间线） -->
+<div id="procModal" class="modal-wrap" style="display:none">
+  <div class="modal">
+    <div class="modal-head">
+      <div>
+        <div class="modal-title" id="pmTitle">进程详情</div>
+        <div class="modal-sub" id="pmSub"></div>
+      </div>
+      <div class="modal-head-right">
+        <select id="pmRange" title="时间范围">
+          <option value="10m">近 10 分钟</option>
+          <option value="30m">近 30 分钟</option>
+          <option value="1h" selected>近 1 小时</option>
+          <option value="3h">近 3 小时</option>
+          <option value="6h">近 6 小时</option>
+          <option value="12h">近 12 小时</option>
+          <option value="1d">近 1 天</option>
+          <option value="3d">近 3 天</option>
+          <option value="7d">近 7 天</option>
+          <option value="all">全部</option>
+        </select>
+        <button id="pmExport">⤓ 导出 CSV</button>
+        <button id="pmClose" class="danger">✕ 关闭</button>
+      </div>
+    </div>
+    <div class="modal-body" id="pmBody"></div>
+  </div>
 </div>
 
 <script>
-// ============ 平台代理访问 ============
-const APP_ID = 'tos-perfmon';
-const BASE = '/v2/proxy/' + APP_ID;
-
-function getCookie(name) {
-  const m = document.cookie.match(new RegExp('(^|;\\s*)' + name + '=([^;]*)'));
-  return m ? decodeURIComponent(m[2]) : '';
-}
-
-// 平台要求的认证头
-function authHeaders() {
-  const csrf = getCookie('X-Csrf-Token') || getCookie('x-csrf-token');
-  return {
-    'Content-Type': 'application/json',
-    'X-Csrf-Token': csrf,
-    'Cookie': document.cookie
-  };
-}
+// ============ 后端访问 ============
+// iframe 内部打开：平台把页面嵌在 /tos-perfmon/ 或 /v2/proxy/tos-perfmon/ 下。
+// nginx 对 <前缀>/api/ 反代到后端 127.0.0.1:8790，其余走静态文件。
+// 由当前页面路径推出该前缀：
+//   /tos-perfmon/             -> /tos-perfmon
+//   /tos-perfmon/index.html   -> /tos-perfmon
+//   /v2/proxy/tos-perfmon     -> /v2/proxy/tos-perfmon
+const BASE = (function () {
+  var p = location.pathname.replace(/\/[^/]*\.html?$/i, '').replace(/\/$/, '');
+  // 兜底：理论上不会为空，若为空说明挂在根路径
+  return p === '' ? '' : p;
+})();
 
 async function api(path, opts) {
   const res = await fetch(BASE + path, Object.assign({
-    credentials: 'include',
-    headers: authHeaders()
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' }
   }, opts || {}));
-  if (res.status === 401) {
-    toast('认证失效，请刷新页面', 'err');
-    throw new Error('401');
+  if (!res.ok && res.status !== 400) {
+    let msg = 'HTTP ' + res.status;
+    try { const j = await res.json(); if (j && j.error) msg = j.error; } catch (e) {}
+    throw new Error(msg);
   }
   return res.json();
 }
@@ -329,6 +754,10 @@ const fmtKB = kb => {
 const esc = s => String(s||'').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const vBadge = v => v==='leak' ? '<span class="badge b-leak">泄漏</span>'
   : v==='suspect' ? '<span class="badge b-sus">疑似</span>'
+  : v==='stepped' ? '<span class="badge b-step">阶梯增长</span>'
+  : v==='startup' ? '<span class="badge b-start">启动期</span>'
+  : v==='noisy' ? '<span class="badge b-noisy">噪声</span>'
+  : v==='insufficient' ? '<span class="badge b-insuf">样本不足</span>'
   : '<span class="badge b-ok">正常</span>';
 const tBadge = t => {
   const m = {heap:'堆泄漏',socket:'连接泄漏',fd:'句柄泄漏',mixed:'混合'};
@@ -336,30 +765,263 @@ const tBadge = t => {
 };
 const sColor = s => s>=60?'var(--red)':s>=10?'var(--yellow)':'var(--dim)';
 
+// 判定标签（描边式，降视觉噪音）：进程页与详情面板统一用它
+const VERDICT_TXT = {
+  leak:'泄漏', suspect:'疑似', stepped:'阶梯增长', startup:'启动期',
+  noisy:'噪声', insufficient:'样本不足', ok:'正常'
+};
+const pill = v => {
+  const k = VERDICT_TXT[v] ? v : 'ok';
+  return `<span class="pill p-${k}">${VERDICT_TXT[k]}</span>`;
+};
+
+// 斜率配色：正增长偏暖（可能泄漏），负值/零用中性色
+const slopeColor = s => s > 0 ? (s >= 100 ? 'var(--red)' : 'var(--orange)') : 'var(--mute)';
+const slopeText = s => (s>0?'+':'') + (Math.abs(s)>=1000 ? (s/1000).toFixed(1)+'k' : s.toFixed(0));
+
+// 图表序号：用于生成唯一 id 与鼠标事件绑定
+let __chartSeq = 0;
+// 所有图表数据登记表（供鼠标交互查询）
+const __charts = {};
+
+/**
+ * 折线图（原生 SVG，带悬停十字准线 + 数据气泡）
+ * opt:
+ *   ts       []   时间戳数组（等长），用于 X 轴
+ *   series   []   [{name, vals, color}] 多序列；单序列可用 vals/color
+ *   vals     []   单序列简写
+ *   height   int
+ *   fmtY     fn   左侧刻度格式化
+ *   fmtVal   fn   气泡内数值格式化
+ *   yTicks   int  Y 轴网格数（默认 6，接近 TOS 观感）
+ */
 function sparkline(vals, opt) {
   opt = opt || {};
-  const w = 1000, h = opt.height || 84;
-  const pad = {l:54,r:12,t:8,b:18};
-  const iw = w-pad.l-pad.r, ih = h-pad.t-pad.b;
-  if (!vals || !vals.length) return '<div class="empty" style="padding:20px">无数据</div>';
-  const min = Math.min(...vals), max = Math.max(...vals);
-  const rng = (max-min)||1, pr = rng*0.12;
-  const lo = min-pr, span = (max+pr)-(min-pr)||1;
-  const X = i => pad.l + (i/Math.max(vals.length-1,1))*iw;
-  const Y = v => pad.t + ih - ((v-lo)/span)*ih;
-  let d = '';
-  vals.forEach((v,i) => { d += (i?' L':'M') + X(i).toFixed(1) + ',' + Y(v).toFixed(1); });
-  const area = d + ` L${X(vals.length-1).toFixed(1)},${pad.t+ih} L${pad.l},${pad.t+ih} Z`;
-  let grid = '';
-  for (let i=0;i<=3;i++) {
-    const y = pad.t + (ih/3)*i;
-    const val = (lo+span) - (span/3)*i;
-    grid += `<line class="gl" x1="${pad.l}" y1="${y.toFixed(1)}" x2="${w-pad.r}" y2="${y.toFixed(1)}"/>`;
-    grid += `<text class="at" x="${pad.l-7}" y="${(y+3.5).toFixed(1)}" text-anchor="end">${opt.fmtY?opt.fmtY(val):val.toFixed(1)}</text>`;
+  const w = 1000;
+
+  // 归一化成多序列
+  let series = opt.series;
+  if (!series) {
+    series = [{ name: opt.name || '', vals: vals || [], color: opt.color || 'var(--blue)' }];
   }
-  const c = opt.color || 'var(--blue)';
-  return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" style="height:${h}px">
-    ${grid}<path class="ar" d="${area}" fill="${c}"/><path class="sl" d="${d}" stroke="${c}"/></svg>`;
+  series = series.filter(s => s && Array.isArray(s.vals) && s.vals.length);
+  if (!series.length) return '<div class="empty" style="padding:20px">无数据</div>';
+
+  const n = series[0].vals.length;
+  const hasTime = Array.isArray(opt.ts) && opt.ts.length === n && n > 1;
+  const h = opt.height || 84;
+  // noAxis：KPI 卡内的迷你图 —— 去掉坐标轴留白和刻度文字，只保留折线形状
+  const noAxis = opt.noAxis === true;
+  const pad = noAxis ? {l:1, r:1, t:3, b:3}
+                     : {l:64, r:16, t:10, b: hasTime ? 28 : 12};
+  const iw = w-pad.l-pad.r, ih = h-pad.t-pad.b;
+
+  // Y 轴范围：多序列统一
+  let allMin = Infinity, allMax = -Infinity;
+  series.forEach(s => s.vals.forEach(v => { if (v<allMin) allMin=v; if (v>allMax) allMax=v; }));
+  const rng = (allMax-allMin)||1, pr = rng*0.12;
+  const lo = allMin-pr, span = (allMax+pr)-(allMin-pr)||1;
+
+  const X = i => pad.l + (i/Math.max(n-1,1))*iw;
+  const Y = v => pad.t + ih - ((v-lo)/span)*ih;
+  const fmtY = opt.fmtY || (v => v.toFixed(1));
+
+  // 每条序列的路径
+  let paths = '', areas = '';
+  const cs = series.map(s => s.color || 'var(--blue)');
+  series.forEach((s, si) => {
+    let d = '';
+    s.vals.forEach((v,i) => { d += (i?' L':'M') + X(i).toFixed(1) + ',' + Y(v).toFixed(1); });
+    paths += `<path class="cl" d="${d}" stroke="${cs[si]}" fill="none"/>`;
+    if (si === 0) areas = d + ` L${X(n-1).toFixed(1)},${pad.t+ih} L${pad.l},${pad.t+ih} Z`;
+  });
+
+  // 网格：Y 轴密一些（默认 6 档，贴近 TOS 观感）
+  // noAxis 时完全不画网格（注意不能用 yTicks=0，否则 ih/0 会产生 NaN 坐标）
+  const yTicks = noAxis ? 0 : (opt.yTicks === undefined ? 6 : opt.yTicks);
+  let grid = '';
+  if (!noAxis) {
+    for (let i=0;i<=yTicks;i++) {
+      const y = pad.t + (ih/yTicks)*i;
+      const val = (lo+span) - (span/yTicks)*i;
+      grid += `<line class="gl" x1="${pad.l}" y1="${y.toFixed(1)}" x2="${w-pad.r}" y2="${y.toFixed(1)}"/>`;
+      grid += `<text class="at" x="${pad.l-8}" y="${(y+3.5).toFixed(1)}" text-anchor="end">${fmtY(val)}</text>`;
+    }
+  }
+
+  // X 轴时间刻度
+  let xaxis = '';
+  if (hasTime && !noAxis) {
+    const t0 = opt.ts[0], t1 = opt.ts[n-1];
+    const spanS = t1 - t0;
+    // 刻度数随可用宽度和标签长度自适应：秒级标签更长，就少放几个，
+    // 否则在窄面板里会挤成一团（例如 5 个 "11:13:18" 连排）。
+    const labelLen = spanS <= 900 ? 52 : spanS <= 86400 ? 38 : 66;  // 估算像素宽
+    const ticks = Math.max(2, Math.min(6, Math.floor(iw / labelLen)));
+    for (let i=0;i<ticks;i++) {
+      const x = pad.l + (iw/(ticks-1))*i;
+      const t = t0 + spanS*(i/(ticks-1));
+      // 首尾刻度贴边对齐，避免溢出面板
+      const anchor = i === 0 ? 'start' : (i === ticks-1 ? 'end' : 'middle');
+      xaxis += `<text class="at" x="${x.toFixed(1)}" y="${h-9}" text-anchor="${anchor}">${fmtTimeTick(t)}</text>`;
+    }
+  }
+
+  // 数据点：点少时画实心圆（TOS 风格）；迷你图不画点
+  let dots = '';
+  if (n <= 40 && !noAxis) {
+    series.forEach((s, si) => {
+      s.vals.forEach((v,i) => {
+        dots += `<circle cx="${X(i).toFixed(1)}" cy="${Y(v).toFixed(1)}" r="2.6" fill="${cs[si]}" stroke="var(--panel)" stroke-width="1"/>`;
+      });
+    });
+  }
+
+  // 交互层：十字准线 + 游标点 + 气泡（放在 SVG 内，坐标随 viewBox 缩放）
+  // noAxis（KPI 迷你图）不注册交互：否则 __charts 每轮刷新都会新增条目、
+  // 永不释放，长期开着页面会持续吃内存。
+  const cid = 'ch' + (++__chartSeq);
+  if (!noAxis) {
+    __charts[cid] = {
+      n, ts: opt.ts || null, series, w, h, pad, iw, ih, lo, span,
+      fmtVal: opt.fmtVal || fmtY,
+      fmtName: opt.fmtName || (s => s.name || ''),
+    };
+  }
+
+  const overlay = noAxis ? '' : `
+    <g class="crosshair" id="${cid}-cross" style="display:none">
+      <line class="chline" id="${cid}-vline" y1="${pad.t}" y2="${pad.t+ih}"/>
+      <line class="chline" id="${cid}-hline" x1="${pad.l}" x2="${w-pad.r}"/>
+      ${series.map((s,si)=>`<circle class="chdot" id="${cid}-dot${si}" r="4" fill="${cs[si]}" stroke="#fff" stroke-width="1.5"/>`).join('')}
+    </g>
+    <rect class="hit" x="${pad.l}" y="${pad.t}" width="${iw}" height="${ih}"
+          fill="transparent" style="cursor:crosshair"
+          onmousemove="chartHover(event,'${cid}')"
+          onmouseleave="chartLeave('${cid}')"/>`;
+
+  return `<div class="chartbox" id="${cid}-box">
+    <svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" style="height:${h}px">
+      ${grid}<path class="ar" d="${areas}" fill="${cs[0]}"/>${paths}${dots}${xaxis}${overlay}
+    </svg>
+    <div class="chpop" id="${cid}-pop" style="display:none"></div>
+  </div>`;
+}
+
+// 鼠标悬停：定位最近数据点，显示十字线 + 气泡
+function chartHover(ev, cid) {
+  const C = __charts[cid];
+  if (!C) return;
+  const box = document.getElementById(cid + '-box');
+  const svg = box.querySelector('svg');
+  const rect = svg.getBoundingClientRect();
+  // 换算到 viewBox 坐标系
+  const vx = (ev.clientX - rect.left) / rect.width * C.w;
+  // 最近索引
+  let idx = Math.round((vx - C.pad.l) / C.iw * (C.n - 1));
+  idx = Math.max(0, Math.min(C.n - 1, idx));
+
+  const X = i => C.pad.l + (i/Math.max(C.n-1,1))*C.iw;
+  const Y = v => C.pad.t + C.ih - ((v-C.lo)/C.span)*C.ih;
+  const px = X(idx);
+
+  // 十字线
+  const cross = document.getElementById(cid + '-cross');
+  cross.style.display = '';
+  const vl = document.getElementById(cid + '-vline');
+  vl.setAttribute('x1', px.toFixed(1));
+  vl.setAttribute('x2', px.toFixed(1));
+
+  // 各序列游标点
+  let mainY = null;
+  C.series.forEach((s, si) => {
+    const v = s.vals[idx];
+    const dot = document.getElementById(cid + '-dot' + si);
+    if (v === undefined || v === null) { dot.style.display = 'none'; return; }
+    dot.style.display = '';
+    const py = Y(v);
+    dot.setAttribute('cx', px.toFixed(1));
+    dot.setAttribute('cy', py.toFixed(1));
+    if (si === 0) mainY = py;
+  });
+  // 水平线对齐主序列
+  const hl = document.getElementById(cid + '-hline');
+  if (mainY !== null) {
+    hl.setAttribute('y1', mainY.toFixed(1));
+    hl.setAttribute('y2', mainY.toFixed(1));
+    hl.style.display = '';
+  } else hl.style.display = 'none';
+
+  // 气泡内容
+  let html = '';
+  if (C.ts && C.ts[idx]) {
+    html += `<div class="chpop-t">${fmtFullTime(C.ts[idx])}</div>`;
+  }
+  C.series.forEach(s => {
+    const v = s.vals[idx];
+    if (v === undefined || v === null) return;
+    const nm = C.fmtName(s);
+    html += `<div class="chpop-r">
+      <span class="chpop-k"><i style="background:${s.color||'var(--blue)'}"></i>${esc(nm)}</span>
+      <span class="chpop-v">${C.fmtVal(v)}</span></div>`;
+  });
+  const pop = document.getElementById(cid + '-pop');
+  pop.innerHTML = html;
+  pop.style.display = '';
+
+  // 气泡定位：跟随鼠标，靠右时翻到左侧
+  const boxRect = box.getBoundingClientRect();
+  const relX = ev.clientX - boxRect.left;
+  const relY = ev.clientY - boxRect.top;
+  const popW = pop.offsetWidth || 160;
+  let left = relX + 16;
+  if (left + popW > boxRect.width) left = relX - popW - 16;
+  if (left < 0) left = 4;
+  pop.style.left = left + 'px';
+  pop.style.top = Math.max(4, relY - 20) + 'px';
+}
+
+function chartLeave(cid) {
+  const cross = document.getElementById(cid + '-cross');
+  if (cross) cross.style.display = 'none';
+  const pop = document.getElementById(cid + '-pop');
+  if (pop) pop.style.display = 'none';
+}
+
+// 清理已从 DOM 移除的图表注册项。
+// 每次 innerHTML 重建图表都会生成新的 cid，旧的 __charts 条目若不删除，
+// 页面长期开着（自动刷新）会持续增长。这里按 DOM 实际存在的 box 回收。
+function pruneCharts() {
+  for (const cid in __charts) {
+    if (!document.getElementById(cid + '-box')) delete __charts[cid];
+  }
+}
+
+// 完整时间：2026/09/18 16:24:05
+function fmtFullTime(ts) {
+  const d = new Date(ts * 1000);
+  const p = x => String(x).padStart(2,'0');
+  return `${d.getFullYear()}/${p(d.getMonth()+1)}/${p(d.getDate())} ` +
+         `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
+// 时间刻度格式：跨度不同粒度不同
+function fmtTimeTick(ts) {
+  const d = new Date(ts * 1000);
+  const hh = String(d.getHours()).padStart(2,'0');
+  const mm = String(d.getMinutes()).padStart(2,'0');
+  const ss = String(d.getSeconds()).padStart(2,'0');
+  const span = window.__chartSpan || 3600;
+  if (span <= 900) return `${hh}:${mm}:${ss}`;      // 15分钟内 → 秒级
+  if (span <= 86400) return `${hh}:${mm}`;          // 1天内 → 时分
+  return `${d.getMonth()+1}/${d.getDate()} ${hh}:${mm}`; // 更长 → 月日时分
+}
+
+// 绝对时间标签
+function fmtTimeLabel(ts) {
+  const d = new Date(ts * 1000);
+  return `${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')} ` +
+         `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}:${String(d.getSeconds()).padStart(2,'0')}`;
 }
 
 // ============ 状态刷新 ============
@@ -382,59 +1044,292 @@ async function refreshStatus() {
 }
 
 // ============ 分析报告 ============
+let CURRENT_RANGE = '1h';
+let CURRENT_TAB = 'overview';
+let PROC_FILTER = '';
+
+// 进程列表排序：字段 + 方向
+// 三个维度对应后端已算好的列，无需前端重算：
+//   rss    → rss_end_kb          当前内存占用
+//   growth → rss_slope_kb_hour   内存增长率（KB/小时）
+//   name   → comm                进程名
+// 默认按占用降序（沿用旧行为）；点同一按钮切换升降序，点别的维度切过去并保持方向。
+let PROC_SORT = 'rss';
+let PROC_SORT_DESC = true;
+try {
+  const _ps = localStorage.getItem('tos-perfmon-procsort');
+  if (_ps === 'rss' || _ps === 'growth' || _ps === 'name') PROC_SORT = _ps;
+  const _pd = localStorage.getItem('tos-perfmon-procsortdesc');
+  if (_pd !== null) PROC_SORT_DESC = _pd !== '0';
+} catch (e) {}
+
+// 按当前排序设置排列进程数组（返回新数组，不改原数组）
+function sortProcs(list) {
+  const dir = PROC_SORT_DESC ? -1 : 1;
+  const arr = [...list];
+  if (PROC_SORT === 'name') {
+    arr.sort((a,b) => dir * String(a.comm||'').localeCompare(String(b.comm||''), 'zh'));
+  } else if (PROC_SORT === 'growth') {
+    arr.sort((a,b) => dir * ((a.rss_slope_kb_hour||0) - (b.rss_slope_kb_hour||0)));
+  } else {
+    arr.sort((a,b) => dir * ((a.rss_end_kb||0) - (b.rss_end_kb||0)));
+  }
+  return arr;
+}
+
+// 同步排序按钮的选中态与箭头
+function renderSortBar() {
+  document.querySelectorAll('#sortBar button').forEach(b => {
+    const on = b.dataset.sort === PROC_SORT;
+    b.classList.toggle('on', on);
+    const arw = b.querySelector('.arw');
+    if (arw) arw.textContent = on ? (PROC_SORT_DESC ? '▼' : '▲') : '';
+  });
+}
+
+// ============ 自动刷新（声明必须在此，勿后移）============
+// 这些变量后面的事件绑定会直接读写。JS 的 let 存在"暂时性死区"，
+// 若声明晚于首次赋值，会抛 ReferenceError 并中断整个脚本，
+// 导致后续所有 onclick 绑定失效（出现过"关闭/导出按钮点不动"）。
+// 默认开启；开关位于「设置」Tab，界面上不放按钮。
+let AUTO_REFRESH = true;
+let __lastRefresh = 0;
+try {
+  const _ar = localStorage.getItem('tos-perfmon-autorefresh');
+  if (_ar !== null) AUTO_REFRESH = _ar !== '0';
+} catch (e) {}
+
 async function loadReport() {
   const kpis = document.getElementById('kpis');
   kpis.innerHTML = '<div class="card" style="grid-column:1/-1"><div class="loading"><div class="spin"></div>分析中…</div></div>';
   try {
-    const r = await api('/api/report');
+    const r = await api('/api/report?range=' + encodeURIComponent(CURRENT_RANGE));
     if (r.error) {
       kpis.innerHTML = `<div class="empty" style="grid-column:1/-1">
         <div class="ic">📊</div><div>${esc(r.error)}</div>
         <div class="hint">点击「开始采集」后等待几分钟再分析</div></div>`;
-      ['secTrend','secLeaks','secSus','secTop','secGrowth','secAll']
+      ['secTrend','secLeaks','secSus','secGrowth','secAll','secMemBreak']
         .forEach(id => document.getElementById(id).style.display='none');
+      renderAlerts([]);
       return;
     }
     render(r);
+    renderAlerts(r.alerts || []);
   } catch (e) {
     kpis.innerHTML = `<div class="empty" style="grid-column:1/-1"><div class="ic">⚠️</div>
       <div>分析失败</div><div class="hint">${esc(e.message)}</div></div>`;
   }
 }
 
-function render(r) {
-  const m = r.meta, s = r.summary, sys = r.system;
+// ============ 告警跳转进程时间线 ============
+// 点击告警项 → 切到「时间线」Tab 并选中该进程，直接展示多图时间线。
+// 系统级告警（scope='system'）没有对应进程，不跳转。
+async function gotoProcFromAlert(pid, name) {
+  if (!pid) return;
+  const sel = document.getElementById('tlProcSel');
+  // 跳过 switchTab 的自动填充：本函数会自己选中目标进程后加载
+  switchTab('timeline', { skipTimelineFill: true });
 
-  // KPI
+  // 时间线 Tab 的进程下拉是首次进入时异步填充的。
+  // 若还没填过（或该进程不在前 80 条里），这里必须先补上目标项，否则选不中。
+  const ensureOption = () => {
+    const has = [...sel.options].some(o => String(o.value) === String(pid));
+    if (!has) {
+      const row = ((window.__lastReport && window.__lastReport.all) || [])
+                    .find(x => String(x.pid) === String(pid));
+      const label = row
+        ? `${row.comm} (PID ${pid}) — ${fmtKB(row.rss_end_kb)}`
+        : `${name || 'PID ' + pid} (PID ${pid})`;
+      sel.insertAdjacentHTML('afterbegin', `<option value="${pid}">${esc(label)}</option>`);
+    }
+    sel.value = String(pid);
+  };
+
+  if (!TL_LOADED) {
+    // 只填充下拉、不自动加载第一条，随后由本函数选中目标进程再加载
+    await fillProcSelect(false);
+  }
+  ensureOption();
+  TL_PID = pid;
+  await loadTimelineTab();
+  toast(`已定位到 ${name || ('PID ' + pid)} 的时间线`, 'ok');
+}
+
+// ============ 告警渲染 ============
+function renderAlerts(alerts) {
+  const bar = document.getElementById('alertBar');
+  let html = '';
+
+  // 数据不足提示（优先）
+  if (window.__lastMeta && !window.__lastMeta.reliable) {
+    html += `<div class="notice">
+      <span>⏳</span>
+      <div>当前仅 <b>${window.__lastMeta.samples}</b> 个样本，需累计 <b>${window.__lastMeta.min_samples}</b> 个才开始判定。
+      在此之前不做泄漏结论，避免误报。<br>
+      <span style="color:var(--mute)">按当前采样间隔，约需 ${Math.ceil((window.__lastMeta.min_samples - window.__lastMeta.samples) * (window.__lastMeta.interval||10) / 60)} 分钟。</span></div>
+    </div>`;
+  }
+
+  if (alerts && alerts.length) {
+    for (const a of alerts.slice(0, 12)) {
+      const cls = a.level === 'critical' ? 'crit' : 'warn';
+      const ico = a.level === 'critical' ? '🔴' : '🟡';
+      const nm = a.scope === 'system' ? a.name : `${esc(a.name)} <span style="color:var(--mute)">(PID ${a.pid})</span>`;
+      // 有 pid 的告警整条可点，跳转到该进程详情。
+      // 用 data 属性传参，避免把进程名拼进 onclick 字符串（名字含引号会破坏 HTML）。
+      const attrs = a.pid
+        ? ` clickable" data-pid="${a.pid}" data-name="${esc(a.name)}"`
+        : '"';
+      html += `<div class="alert ${cls}${attrs}>
+        <span class="ico">${ico}</span>
+        <div class="body"><b>${nm}</b> — ${esc(a.msg)}</div>
+        ${a.pid ? '<span class="go">查看进程 ›</span>' : ''}
+      </div>`;
+    }
+  }
+  bar.innerHTML = html;
+  bar.style.display = html ? '' : 'none';
+}
+
+// 系统内存构成堆叠条：已用 / 缓存 / 空闲
+// 后端未单独存 Buffers+Cached，这里用两个已有字段推导：
+//   mem_used_kb       = MemTotal - MemAvailable      （内核认为"真占用"的部分）
+//   mem_used_naive_kb = MemTotal - MemFree - Buffers - Cached（不含缓存）
+// 差值即"被缓存占用、但随时可回收"的部分。
+//
+// 注意：mem_used_naive_kb 是后加的字段，早于它写入的历史样本读出来是 0。
+// 此时不能按公式算（会得到"空闲 100%"这种荒谬结果），必须降级为只显示已用/空闲。
+function renderMemBreak(r) {
+  const t = r.trend || {};
+  const sys = r.system || {};
+  const total = t.mem_total_kb || sys.mem_total_kb || 0;
+  const sec = document.getElementById('secMemBreak');
+  if (!total) { sec.style.display = 'none'; return; }
+
+  const last = a => (Array.isArray(a) && a.length) ? a[a.length-1] : 0;
+  const used  = Math.max(0, last(t.mem_used_kb));
+  // 历史样本没有 naive 值 → 该字段整列都是 0，视为"不可用"
+  const naiveRaw = last(t.mem_used_naive_kb);
+  const naiveOk = naiveRaw > 0 && naiveRaw <= total && used > 0 && naiveRaw <= used;
+  const naive = naiveOk ? naiveRaw : 0;
+  const cache = naiveOk ? Math.max(0, Math.min(used - naive, total - naive)) : 0;
+  const free  = Math.max(0, total - used);
+  const p = v => (v/total*100);
+  sec.style.display = '';
+
+  // 堆叠：已用(深) + 缓存(浅) + 空闲(底)
+  document.getElementById('memStack').innerHTML = naiveOk
+    ? `<i style="width:${p(naive)}%;background:var(--blue)"></i>` +
+      `<i style="width:${p(cache)}%;background:var(--cyan);opacity:.55"></i>` +
+      `<i style="width:${p(free)}%;background:var(--panel2)"></i>`
+    : `<i style="width:${p(used)}%;background:var(--blue)"></i>` +
+      `<i style="width:${p(free)}%;background:var(--panel2)"></i>`;
+
+  document.getElementById('memLegend').innerHTML = naiveOk
+    ? `<span><em style="background:var(--blue)"></em>已用 <b>${fmtKB(naive)}</b> (${p(naive).toFixed(1)}%)</span>
+       <span><em style="background:var(--cyan);opacity:.55"></em>缓存 <b>${fmtKB(cache)}</b> (${p(cache).toFixed(1)}%)</span>
+       <span><em style="background:var(--panel2)"></em>空闲 <b>${fmtKB(free)}</b> (${p(free).toFixed(1)}%)</span>
+       <span style="color:var(--mute)">合计 <b style="color:var(--text)">${fmtKB(total)}</b></span>`
+    : `<span><em style="background:var(--blue)"></em>已用 <b>${fmtKB(used)}</b> (${p(used).toFixed(1)}%)</span>
+       <span><em style="background:var(--panel2)"></em>空闲 <b>${fmtKB(free)}</b> (${p(free).toFixed(1)}%)</span>
+       <span style="color:var(--mute)">合计 <b style="color:var(--text)">${fmtKB(total)}</b></span>
+       <span style="color:var(--yellow)">缓存明细需采集新样本后显示</span>`;
+
+  document.getElementById('memBreakSub').textContent = `${p(used).toFixed(1)}% 已分配`;
+
+  // Swap + 内核占用
+  const swapUsed = Math.max(0, last(t.swap_used_kb));
+  const slab = Math.max(0, last(t.slab_kb));
+  const sun = Math.max(0, last(t.sunreclaim_kb));
+  document.getElementById('swapStack').innerHTML = swapUsed > 0
+    ? `<i style="width:100%;background:var(--orange);opacity:.75"></i>`
+    : `<i style="width:100%;background:var(--panel2)"></i>`;
+  document.getElementById('swapLegend').innerHTML = `
+    <span><em style="background:var(--orange);opacity:.75"></em>Swap 已用 <b>${fmtKB(swapUsed)}</b></span>
+    <span><em style="background:var(--purple)"></em>不可回收 Slab <b>${fmtKB(sun)}</b></span>
+    <span><em style="background:var(--cyan);opacity:.55"></em>Slab 总量 <b>${fmtKB(slab)}</b></span>
+    ${swapUsed === 0 ? '<span style="color:var(--green)">未发生换页</span>'
+                     : '<span style="color:var(--orange)">已发生换页，关注 I/O 压力</span>'}`;
+}
+
+function render(r) {
+  const s = r.summary, sys = r.system;
+  window.__lastMeta = r.meta;
+  window.__lastReport = r;
+
+  // KPI：5 张紧凑卡，每张带迷你趋势
+  const sysCls = sys.verdict==='leak' ? 'red'
+               : sys.verdict==='suspect' ? 'yellow'
+               : sys.verdict==='ok' ? 'green' : 'blue';
+  const slopeTxt = (sys.mem_slope_kb_min > 0 ? '+' : '') + sys.mem_slope_kb_min.toFixed(1);
+
+  // 迷你趋势：截取尾部若干点，避免长窗口下点过密
+  const tinySpark = (vals, color) => {
+    if (!Array.isArray(vals) || vals.length < 2) return '';
+    const step = Math.max(1, Math.floor(vals.length/60));
+    const v = vals.filter((_,i) => i % step === 0);
+    return `<div class="kpi-spark">${sparkline(v, {
+      height:26, yTicks:0, color:color, noAxis:true
+    })}</div>`;
+  };
+  const t0 = r.trend || {};
+
   const kpis = [
-    { l:'内存斜率', v:sys.mem_slope_kb_min, u:'KB/分',
-      cls: sys.verdict==='leak'?'red':sys.verdict==='suspect'?'yellow':'green',
-      s: '≈ ' + fmtKB(Math.abs(sys.mem_slope_kb_day)) + ' / 天' },
-    { l:'判定泄漏', v:s.leak_count, u:'个',
-      cls: s.leak_count?'red':'green', s: s.leak_count?'需重点排查':'未发现泄漏' },
-    { l:'疑似泄漏', v:s.suspect_count, u:'个',
-      cls: s.suspect_count?'yellow':'green', s:'建议继续观察' },
-    { l:'采样概况', v:m.samples, u:'样本',
-      cls:'blue', s:`${m.duration_h}h · ${m.processes_tracked} 个进程` },
+    { l:'内存占用', v: (sys.mem_end_pct||0).toFixed(1), u:'%', cls: (sys.mem_end_pct||0)>85?'red':(sys.mem_end_pct||0)>70?'yellow':'green',
+      s: `${fmtKB(sys.mem_total_kb||0)} 总量 · 可用 ${fmtKB((t0.mem_available_kb||[]).slice(-1)[0]||0)}`,
+      spk: tinySpark(t0.mem_used_pct, 'var(--blue)') },
+    { l:'内存斜率', v: slopeTxt, u:'KB/分', cls: sysCls,
+      s: sys.mem_slope_kb_min > 0
+           ? `≈ ${fmtKB(Math.abs(sys.mem_slope_kb_day))}/天 · R²=${(sys.mem_r2||0).toFixed(2)}`
+           : '内存未增长',
+      spk: tinySpark(t0.slab_kb, 'var(--purple)') },
+    { l:'判定泄漏', v:s.leak_count, u:'个', cls: s.leak_count?'red':'green',
+      s: s.leak_count?'需重点排查':'未发现泄漏', spk:'' },
+    { l:'疑似泄漏', v:s.suspect_count, u:'个', cls: s.suspect_count?'yellow':'green',
+      s:'建议继续观察', spk:'' },
+    { l:'Swap 使用', v: fmtKB(sys.swap_used_kb||0), u:'', cls: (sys.swap_used_kb||0)>0?'yellow':'green',
+      s: (sys.swap_used_kb||0)>0 ? '已发生换页' : '未使用 Swap',
+      spk: tinySpark(t0.swap_used_kb, 'var(--orange)') },
   ];
   document.getElementById('kpis').innerHTML = kpis.map(k => `
-    <div class="card ${k.cls}">
+    <div class="card tight ${k.cls}" title="${esc(k.l)}">
       <div class="kpi-l">${k.l}</div>
-      <div class="kpi-v c-${k.cls}">${typeof k.v==='number'? (k.u==='KB/分'?k.v.toFixed(1):k.v) : k.v}<span class="kpi-u">${k.u}</span></div>
+      <div class="kpi-v c-${k.cls}">${typeof k.v==='number'? k.v : k.v}${k.u?`<span class="kpi-u">${k.u}</span>`:''}</div>
       <div class="kpi-s">${k.s}</div>
+      ${k.spk || ''}
     </div>`).join('');
+
+  // 内存构成堆叠条：已用 / 缓存 / 空闲
+  renderMemBreak(r);
 
   // 趋势
   document.getElementById('secTrend').style.display = '';
   const t = r.trend;
+  if (t.ts && t.ts.length > 1) window.__chartSpan = t.ts[t.ts.length-1] - t.ts[0];
+  const tsOpt = { ts: t.ts };
   document.getElementById('memRange').textContent =
     `${t.mem_used_pct[0].toFixed(1)}% → ${t.mem_used_pct[t.mem_used_pct.length-1].toFixed(1)}%`;
   document.getElementById('chartMem').innerHTML =
-    sparkline(t.mem_used_pct, {color:'var(--blue)', fmtY:v=>v.toFixed(0)+'%'});
+    sparkline(null, Object.assign({
+      height:170, yTicks:6, fmtY:v=>v.toFixed(0)+'%', fmtVal:v=>v.toFixed(2)+'%',
+      series:[
+        {name:'内存占用', vals:t.mem_used_pct, color:'var(--blue)'},
+        {name:'CPU 使用率', vals:t.cpu_pct, color:'var(--green)'}
+      ]
+    }, tsOpt));
   document.getElementById('chartSlab').innerHTML =
-    sparkline(t.sunreclaim_kb, {color:'var(--purple)', height:76, fmtY:v=>fmtKB(v)});
+    sparkline(null, Object.assign({
+      height:130, yTicks:5, fmtY:v=>fmtKB(v), fmtVal:v=>fmtKB(v),
+      series:[
+        {name:'不可回收 Slab', vals:t.sunreclaim_kb, color:'var(--purple)'},
+        {name:'Slab 总量', vals:t.slab_kb, color:'var(--cyan)'}
+      ]
+    }, tsOpt));
   document.getElementById('chartLoad').innerHTML =
-    sparkline(t.load1, {color:'var(--cyan)', height:76, fmtY:v=>v.toFixed(1)});
+    sparkline(null, Object.assign({
+      height:130, yTicks:5, fmtY:v=>v.toFixed(1), fmtVal:v=>v.toFixed(2),
+      series:[{name:'系统负载 (1min)', vals:t.load1, color:'var(--orange)'}]
+    }, tsOpt));
 
   // 泄漏 / 疑似
   document.getElementById('leakCnt').textContent = r.leaks.length;
@@ -448,61 +1343,112 @@ function render(r) {
     document.getElementById('susList').innerHTML = r.suspects.map(x => leakCard(x, false)).join('');
   } else document.getElementById('secSus').style.display = 'none';
 
-  // 排行
-  document.getElementById('secTop').style.display = '';
-  const maxR = Math.max(...r.top_memory.map(x=>x.rss_end_kb), 1);
-  const totalMem = sys.mem_total_kb || 1;
-  document.getElementById('topMem').innerHTML = r.top_memory.map((x,i) => {
-    const pct = (x.rss_end_kb/maxR*100).toFixed(1);
-    const bc = x.verdict==='leak'?'var(--red)':x.verdict==='suspect'?'var(--yellow)':'var(--blue)';
-    return `<tr>
-      <td class="num" style="color:var(--mute)">${i+1}</td>
-      <td><div class="proc"><span class="n">${esc(x.comm)}</span><span class="p">PID ${x.pid}</span></div></td>
-      <td class="num">${fmtKB(x.rss_end_kb)}</td>
-      <td class="num" style="color:var(--dim)">${(x.rss_end_kb/totalMem*100).toFixed(1)}%</td>
-      <td><div class="bw"><div class="bg"><div class="bf" style="width:${pct}%;background:${bc}"></div></div></div></td>
-      <td class="num" style="color:${sColor(x.rss_slope_kb_hour)}">${x.rss_slope_kb_hour>0?'+':''}${x.rss_slope_kb_hour}</td>
-      <td>${vBadge(x.verdict)}</td></tr>`;
-  }).join('');
+  // 进程相关表格（拆出去，支持搜索过滤）
+  renderProcTables(r);
 
-  document.getElementById('secGrowth').style.display = '';
-  document.getElementById('topGrow').innerHTML = r.top_growth.map((x,i) => `
-    <tr>
+  // 回收本轮重建后失效的图表注册项（防长期开着页面时缓慢增长）
+  pruneCharts();
+}
+
+// 进程 Tab：左侧紧凑列表（主）+ 右侧详情，另附折叠的「增长最快 / 全部明细」
+function renderProcTables(r) {
+  window.__lastReport = r;
+  const sys = r.system || {};
+  const match = (x) => {
+    if (!PROC_FILTER) return true;
+    return (x.comm || '').toLowerCase().includes(PROC_FILTER)
+        || String(x.pid).includes(PROC_FILTER)
+        || (x.exe || '').toLowerCase().includes(PROC_FILTER);
+  };
+
+  // ---- 左侧紧凑列表：按当前排序维度排列，全量（不是 top N）----
+  const allRaw = [...(r.all || [])].filter(match);
+  const all = sortProcs(allRaw);
+  // 细线宽度始终以"内存占用最大值"为基准，与排序无关，
+  // 否则按增长率排序时细线会失真。
+  const maxR = Math.max(...allRaw.map(x=>x.rss_end_kb), 1);
+  document.getElementById('procCount').textContent =
+    PROC_FILTER ? `匹配 ${all.length} / ${(r.all||[]).length}`
+                : `共 ${all.length} 个`;
+  renderSortBar();
+
+  const body = document.getElementById('procListBody');
+  if (!all.length) {
+    body.innerHTML = `<div class="empty" style="border:none;background:none;padding:30px">
+      <div>${PROC_FILTER?'无匹配进程':'暂无进程数据'}</div></div>`;
+  } else {
+    body.innerHTML = all.map(x => {
+      const pct = (x.rss_end_kb/maxR*100).toFixed(1);
+      const mc = x.verdict==='leak'?'var(--red)':x.verdict==='suspect'?'var(--yellow)'
+               : x.verdict==='stepped'?'var(--blue)':'var(--cyan)';
+      const sel = (x.pid === PM_PID) ? ' sel' : '';
+      return `<div class="pl-row${sel}" data-pid="${x.pid}" onclick="openProc(${x.pid})"
+                   title="${esc(x.comm)} · PID ${x.pid} · 点击查看详情">
+        <div class="pl-nm">
+          <span class="pl-name">${esc(x.comm)}</span>
+          <span class="pl-pid">${x.pid}</span>
+        </div>
+        <span class="pl-val">${fmtKB(x.rss_end_kb)}</span>
+        <span class="pl-slope" style="color:${slopeColor(x.rss_slope_kb_hour)}"
+              title="斜率 ${x.rss_slope_kb_hour} KB/小时">${slopeText(x.rss_slope_kb_hour)}</span>
+        ${pill(x.verdict)}
+        <i class="pl-meter" style="width:${pct}%;background:${mc}"></i>
+      </div>`;
+    }).join('');
+  }
+
+  // ---- 折叠区：增长最快 ----
+  const topGrow = (r.top_growth || []).filter(match);
+  const secG = document.getElementById('secGrowth');
+  secG.style.display = topGrow.length ? '' : 'none';
+  document.getElementById('topGrow').innerHTML = topGrow.map((x,i) => `
+    <tr class="clickable" onclick="openProc(${x.pid})" title="点击查看详情">
       <td class="num" style="color:var(--mute)">${i+1}</td>
-      <td><div class="proc"><span class="n">${esc(x.comm)}</span><span class="p">PID ${x.pid}</span></div></td>
+      <td><div class="proc"><span class="n proc-link">${esc(x.comm)}</span><span class="p">PID ${x.pid}</span></div></td>
       <td class="num" style="color:var(--dim)">${fmtKB(x.rss_start_kb)}</td>
       <td class="num">${fmtKB(x.rss_end_kb)}</td>
       <td class="num" style="color:${x.rss_growth_kb>0?'var(--red)':'var(--green)'}">${x.rss_growth_kb>0?'+':''}${fmtKB(x.rss_growth_kb)}</td>
-      <td class="num" style="color:${sColor(x.rss_slope_kb_hour)}">${x.rss_slope_kb_hour>0?'+':''}${x.rss_slope_kb_hour}</td>
+      <td class="num" style="color:${slopeColor(x.rss_slope_kb_hour)}">${x.rss_slope_kb_hour>0?'+':''}${x.rss_slope_kb_hour}</td>
       <td class="num" style="color:var(--dim)">${(x.rss_monotonic*100).toFixed(0)}%</td>
-      <td>${vBadge(x.verdict)}</td></tr>`).join('');
+      <td>${pill(x.verdict)}</td></tr>`).join('');
 
-  // 全部
-  document.getElementById('secAll').style.display = '';
-  const all = [...r.all].sort((a,b)=>b.rss_end_kb-a.rss_end_kb);
+  // ---- 折叠区：全部明细 ----
+  const secA = document.getElementById('secAll');
+  secA.style.display = '';
   document.getElementById('allCnt').textContent = all.length;
   document.getElementById('allBody').innerHTML = all.map(x => `
-    <tr>
-      <td><div class="proc"><span class="n">${esc(x.comm)}</span><span class="p">${esc((x.exe||'').slice(-38))}</span></div></td>
+    <tr class="clickable" onclick="openProc(${x.pid})" title="点击查看详情">
+      <td><div class="proc"><span class="n proc-link">${esc(x.comm)}</span><span class="p">${esc((x.exe||'').slice(-38))}</span></div></td>
       <td class="num">${x.pid}</td>
       <td class="num">${fmtKB(x.rss_end_kb)}</td>
       <td class="num" style="color:var(--dim)">${fmtKB(x.rss_end_kb*0.3)}</td>
       <td class="num">${x.fd_end}</td>
       <td class="num" style="color:${x.fd_socket_slope_per_hour>5?'var(--yellow)':'var(--dim)'}">${x.fd_socket_end}</td>
       <td class="num">${x.threads_end}</td>
-      <td class="num" style="color:${sColor(x.rss_slope_kb_hour)}">${x.rss_slope_kb_hour>0?'+':''}${x.rss_slope_kb_hour}</td>
-      <td>${vBadge(x.verdict)}</td></tr>`).join('');
+      <td class="num" style="color:${slopeColor(x.rss_slope_kb_hour)}">${x.rss_slope_kb_hour>0?'+':''}${x.rss_slope_kb_hour}</td>
+      <td>${pill(x.verdict)}</td></tr>`).join('');
+
+  // 列表重建后恢复选中高亮
+  if (PM_PID) highlightProcRow(PM_PID);
+}
+
+// 列表选中高亮（滚动的列表重建后调用，避免整表重排时丢失选中态）
+function highlightProcRow(pid) {
+  document.querySelectorAll('.pl-row').forEach(el => {
+    el.classList.toggle('sel', String(el.dataset.pid) === String(pid));
+  });
 }
 
 function leakCard(x, isLeak) {
   const c = isLeak ? 'var(--red)' : 'var(--yellow)';
-  return `<div class="leak-card ${isLeak?'red':'yellow'}">
+  return `<div class="leak-card ${isLeak?'red':'yellow'}" style="cursor:pointer" onclick="openProc(${x.pid})" title="点击查看时间线">
     <div class="lc-top">
       <div style="flex:1;min-width:260px">
         <div class="lc-name">
-          <span class="nm">${esc(x.comm)}</span>
+          <span class="nm proc-link">${esc(x.comm)}</span>
           <span class="mono" style="color:var(--mute)">PID ${x.pid}</span>
           ${vBadge(x.verdict)}${tBadge(x.leak_type)}
+          <span class="mono" style="color:var(--mute)">R²=${(x.r2_rss||0).toFixed(2)}</span>
         </div>
         <div class="lc-exe">${esc(x.exe || x.comm)}</div>
         <ul class="lc-rs">${x.reasons.map(y=>`<li>${esc(y)}</li>`).join('')}</ul>
@@ -528,6 +1474,385 @@ function leakCard(x, isLeak) {
   </div>`;
 }
 
+// ============ 进程详情（进程 Tab 右侧面板）============
+// 布局分两处：
+//   1) 进程 Tab → 右侧详情面板（就地查看，不打断扫视）
+//   2) 时间线 Tab / 「完整时间线」按钮 → 原弹窗（多图并排大视图）
+let PM_PID = null;
+
+// 进程 Tab 内点击：就地渲染右侧详情
+async function openProc(pid) {
+  PM_PID = pid;
+  highlightProcRow(pid);
+  const box = document.getElementById('procDetail');
+  const empty = document.getElementById('pdEmpty');
+  const content = document.getElementById('pdContent');
+  empty.style.display = 'none';
+  content.style.display = 'flex';
+  content.innerHTML = '<div class="loading"><div class="spin"></div>加载详情…</div>';
+  await loadProcDetail();
+}
+
+// 右侧详情：指标格 + 一张主趋势图（放大版，形状看得清）
+async function loadProcDetail(silent) {
+  const content = document.getElementById('pdContent');
+  const range = CURRENT_RANGE;
+  const scrollTop = content.scrollTop;
+  try {
+    const d = await api('/api/timeline?pid=' + PM_PID + '&range=' + encodeURIComponent(range));
+    if (d.error) {
+      if (!silent) content.innerHTML = `<div class="pdetail-empty"><div class="ic">⚠️</div><div>${esc(d.error)}</div></div>`;
+      return;
+    }
+    const pts = d.points || [];
+    if (pts.length < 2) {
+      content.innerHTML = '<div class="pdetail-empty"><div class="ic">📉</div><div>该范围内样本不足</div></div>';
+      return;
+    }
+
+    const rss = pts.map(p => p.rss_kb);
+    const anon = pts.map(p => p.anon_kb !== undefined ? p.anon_kb : p.rss_anon_kb);
+    const cur = rss[rss.length-1];
+    const peak = Math.max(...rss);
+    const growth = cur - rss[0];
+    const dtH = (pts[pts.length-1].ts - pts[0].ts) / 3600 || 1;
+    const rateH = growth / dtH;
+    window.__chartSpan = pts[pts.length-1].ts - pts[0].ts;
+    const aliveTag = d.alive === false
+      ? '<span class="pill p-noisy">进程已退出</span>' : '';
+
+    // 从最近一次报告里取判定/斜率（列表已有，避免重复计算）
+    const row = ((window.__lastReport && window.__lastReport.all) || [])
+                  .find(x => String(x.pid) === String(PM_PID)) || {};
+
+    content.innerHTML = `
+      <div class="pd-head">
+        <div class="pd-title">
+          <span class="nm">${esc(d.comm || ('PID '+PM_PID))}</span>
+          <span class="pid">PID ${PM_PID}</span>
+          ${pill(row.verdict)}
+          ${aliveTag}
+        </div>
+        <div class="pd-exe">${esc(d.exe || d.comm || '')}</div>
+        <div class="pd-tools">
+          <button onclick="openProcTimelineModal(${PM_PID})" title="多图并排的大视图">📈 完整时间线</button>
+          <button onclick="exportProcCsv(${PM_PID})" title="导出该进程的采样明细">⤓ 导出 CSV</button>
+        </div>
+      </div>
+      <div class="pd-body">
+        <div class="pd-sec">内存趋势（RSS 常驻 / 匿名）—— 悬停查看数值</div>
+        ${sparkline(null, {
+          ts: pts.map(p => p.ts),
+          height:130, yTicks:4,
+          fmtY: v => fmtKB(v), fmtVal: v => fmtKB(v),
+          series: [
+            {name:'RSS 常驻', vals: rss, color:'var(--blue)'},
+            {name:'匿名内存', vals: anon, color:'var(--purple)'}
+          ]
+        })}
+
+        <div class="pd-sec">关键指标</div>
+        <div class="pd-grid">
+          <div class="pd-cell"><div class="k">当前内存</div>
+            <div class="v">${fmtKB(cur)}</div>
+            <div class="u" style="margin-left:0;color:var(--mute)">起始 ${fmtKB(rss[0])}</div></div>
+          <div class="pd-cell"><div class="k">区间增长</div>
+            <div class="v" style="color:${growth>0?'var(--red)':'var(--green)'}">${(growth>0?'+':'-')}${fmtKB(Math.abs(growth))}</div>
+            <div class="u" style="margin-left:0;color:var(--mute)">${rateH>0?'+':''}${rateH.toFixed(1)} KB/小时</div></div>
+          <div class="pd-cell"><div class="k">峰值</div><div class="v">${fmtKB(peak)}</div>
+            <div class="u" style="margin-left:0;color:var(--mute)">最低 ${fmtKB(Math.min(...rss))}</div></div>
+          <div class="pd-cell"><div class="k">斜率</div>
+            <div class="v" style="color:${slopeColor(row.rss_slope_kb_hour||0)}">${slopeText(row.rss_slope_kb_hour||0)}</div>
+            <div class="u" style="margin-left:0;color:var(--mute)">KB/小时</div></div>
+          <div class="pd-cell"><div class="k">文件描述符</div>
+            <div class="v">${row.fd_end !== undefined ? row.fd_end : '—'}</div>
+            <div class="u" style="margin-left:0;color:var(--mute)">socket ${row.fd_socket_end !== undefined ? row.fd_socket_end : '—'}</div></div>
+          <div class="pd-cell"><div class="k">线程数</div>
+            <div class="v">${row.threads_end !== undefined ? row.threads_end : '—'}</div>
+            <div class="u" style="margin-left:0;color:var(--mute)">样本 ${pts.length} 个</div></div>
+        </div>
+      </div>`;
+    if (silent) content.scrollTop = scrollTop;
+    pruneCharts();
+  } catch (e) {
+    if (!silent) {
+      content.innerHTML = `<div class="pdetail-empty"><div class="ic">⚠️</div>
+        <div>加载失败</div><div style="font-size:11px">${esc(e.message)}</div></div>`;
+    }
+  }
+}
+
+function exportProcCsv(pid) {
+  window.open(BASE + '/api/export?kind=process&pid=' + pid +
+              '&range=' + encodeURIComponent(CURRENT_RANGE), '_blank');
+  toast('已开始下载进程 CSV','ok');
+}
+
+// ============ 进程时间线弹窗（多图并排大视图）============
+function openProcTimelineModal(pid) {
+  PM_PID = pid;
+  const wrap = document.getElementById('procModal');
+  wrap.style.display = 'flex';
+  document.getElementById('pmTitle').textContent = '进程时间线';
+  document.getElementById('pmSub').textContent = 'PID ' + pid;
+  document.getElementById('pmBody').innerHTML =
+    '<div class="loading"><div class="spin"></div>加载时间线…</div>';
+  loadProcTimeline();
+}
+
+async function loadProcTimeline(silent) {
+  const body = document.getElementById('pmBody');
+  const range = document.getElementById('pmRange').value;
+  const scrollTop = body.scrollTop;
+  try {
+    const d = await api('/api/timeline?pid=' + PM_PID + '&range=' + encodeURIComponent(range));
+    if (d.error) {
+      if (!silent) body.innerHTML = `<div class="empty"><div class="ic">⚠️</div><div>${esc(d.error)}</div></div>`;
+      return;
+    }
+    const pts = d.points || [];
+    if (pts.length < 2) {
+      if (!silent) body.innerHTML = '<div class="empty"><div class="ic">📉</div><div>该范围内样本不足</div></div>';
+      return;
+    }
+    document.getElementById('pmTitle').textContent = d.comm || ('PID ' + PM_PID);
+    const aliveTag = d.alive === false ? ' · 进程已退出' : '';
+    document.getElementById('pmSub').textContent =
+      `${d.exe || d.comm} · PID ${d.pid} · ${pts.length} 个采样点 · ${pts[0].time} → ${pts[pts.length-1].time}${aliveTag}`;
+    // 与「时间线」Tab 共用同一套渲染
+    renderProcTimeline(d, body);
+    if (silent) body.scrollTop = scrollTop;
+  } catch (e) {
+    if (!silent) {
+      body.innerHTML = `<div class="empty"><div class="ic">⚠️</div><div>加载失败</div>
+       <div class="hint">${esc(e.message)}</div></div>`;
+    }
+  }
+}
+
+// ============ Tab 切换 ============
+// opts.skipTimelineFill：见下方说明，供告警跳转内部使用。
+function switchTab(name, opts) {
+  document.querySelectorAll('.tab').forEach(t => {
+    t.classList.toggle('active', t.dataset.tab === name);
+  });
+  document.querySelectorAll('.tabpane').forEach(p => {
+    p.classList.toggle('active', p.id === 'pane-' + name);
+  });
+  CURRENT_TAB = name;
+  try { localStorage.setItem('tos-perfmon-tab', name); } catch(e) {}
+  // 各 Tab 首次进入时按需加载。
+  // opts.skipTimelineFill：告警跳转时由调用方自行选中目标进程再加载，
+  // 此处若也触发 fillProcSelect() 会先加载第一条、随后被覆盖 —— 白跑一次请求。
+  if (name === 'timeline' && !TL_LOADED && !(opts && opts.skipTimelineFill)) { fillProcSelect(); }
+  if (name === 'alerts') { loadAlerts(); }
+  if (name === 'settings') { loadSettings(); }
+}
+document.getElementById('tabs').onclick = (e) => {
+  const t = e.target.closest('.tab');
+  if (t) switchTab(t.dataset.tab);
+};
+
+// ============ 时间线 Tab ============
+let TL_LOADED = false;
+let TL_PID = null;
+
+// 填充时间线 Tab 的进程下拉。
+// autoLoad=true（默认）：填完自动选中第一条并加载（用户主动切到该 Tab 时的行为）。
+// autoLoad=false：只填充下拉，由调用方决定选中谁 —— 供告警跳转使用，
+//                 避免"先加载第一条、再被覆盖"造成的重复请求与画面闪烁。
+async function fillProcSelect(autoLoad) {
+  const sel = document.getElementById('tlProcSel');
+  try {
+    const r = await api('/api/report?range=' + encodeURIComponent(CURRENT_RANGE));
+    if (r.error) { sel.innerHTML = '<option>无数据</option>'; return; }
+    const list = [...(r.all || [])].sort((a,b) => b.rss_end_kb - a.rss_end_kb).slice(0, 80);
+    sel.innerHTML = list.map(p =>
+      `<option value="${p.pid}">${esc(p.comm)} (PID ${p.pid}) — ${fmtKB(p.rss_end_kb)}</option>`
+    ).join('');
+    TL_LOADED = true;
+    if (list.length && autoLoad !== false) { TL_PID = list[0].pid; loadTimelineTab(); }
+  } catch(e) {
+    sel.innerHTML = '<option>加载失败</option>';
+  }
+}
+
+async function loadTimelineTab(silent) {
+  const body = document.getElementById('tlBody');
+  const pid = document.getElementById('tlProcSel').value || TL_PID;
+  if (!pid) { body.innerHTML = '<div class="empty"><div class="ic">📈</div><div>无可选进程</div></div>'; return; }
+  TL_PID = pid;
+
+  // silent=true 用于自动刷新：保留滚动位置、不闪 loading
+  const scrollTop = body.scrollTop;
+  if (!silent) body.innerHTML = '<div class="loading"><div class="spin"></div>加载时间线…</div>';
+
+  try {
+    const d = await api('/api/timeline?pid=' + pid + '&range=' + encodeURIComponent(CURRENT_RANGE));
+    if (d.error) {
+      if (!silent) body.innerHTML = `<div class="empty"><div class="ic">⚠️</div><div>${esc(d.error)}</div></div>`;
+      return;
+    }
+    const pts = d.points || [];
+    const aliveTag = d.alive === false ? ' · <span style="color:var(--yellow)">进程已退出</span>' : '';
+    document.getElementById('tlMeta').innerHTML =
+      `${esc(d.comm)} · ${pts.length} 个采样点 · ${pts[0].time} → ${pts[pts.length-1].time}${aliveTag}`;
+
+    renderProcTimeline(d, body);
+    if (silent) body.scrollTop = scrollTop;   // 恢复滚动位置
+  } catch(e) {
+    if (!silent) {
+      body.innerHTML = `<div class="empty"><div class="ic">⚠️</div><div>加载失败</div><div class="hint">${esc(e.message)}</div></div>`;
+    }
+  }
+}
+
+function renderProcTimeline(d, target) {
+  const pts = d.points || [];
+  const rss = pts.map(p => p.rss_kb);
+  const anon = pts.map(p => p.rss_anon_kb);
+  const fds = pts.map(p => p.fd_count);
+  const socks = pts.map(p => p.fd_socket);
+  const ths = pts.map(p => p.threads);
+  const ptsTs = pts.map(p => p.ts);
+  const growth = rss[rss.length-1] - rss[0];
+  const dtH = (pts[pts.length-1].ts - pts[0].ts) / 3600 || 1;
+  const rate = growth / dtH;
+  window.__chartSpan = pts[pts.length-1].ts - pts[0].ts;
+  const tOpt = { ts: ptsTs };
+
+  target.innerHTML = `
+    <div class="pm-grid">
+      <div class="pm-cell"><div class="k">当前 RSS</div><div class="v">${fmtKB(rss[rss.length-1])}</div>
+        <div style="font-size:11px;color:var(--mute)">起始 ${fmtKB(rss[0])}</div></div>
+      <div class="pm-cell"><div class="k">区间增长</div>
+        <div class="v" style="color:${growth>0?'var(--red)':'var(--green)'}">${(growth>0?'+':'-')}${fmtKB(Math.abs(growth))}</div>
+        <div style="font-size:11px;color:var(--mute)">${rate>0?'+':''}${rate.toFixed(1)} KB/小时 · ${growth>0?'增长':'下降'}</div></div>
+      <div class="pm-cell"><div class="k">匿名内存</div><div class="v">${fmtKB(anon[anon.length-1])}</div>
+        <div style="font-size:11px;color:var(--mute)">堆相关</div></div>
+      <div class="pm-cell"><div class="k">文件描述符</div><div class="v">${fds[fds.length-1]}</div>
+        <div style="font-size:11px;color:var(--mute)">socket ${socks[socks.length-1]}</div></div>
+      <div class="pm-cell"><div class="k">线程数</div><div class="v">${ths[ths.length-1]}</div>
+        <div style="font-size:11px;color:var(--mute)">起始 ${ths[0]}</div></div>
+      <div class="pm-cell"><div class="k">峰值</div><div class="v">${fmtKB(Math.max(...rss))}</div>
+        <div style="font-size:11px;color:var(--mute)">最低 ${fmtKB(Math.min(...rss))}</div></div>
+    </div>
+
+    <div class="pm-sec">内存（RSS 常驻 / 匿名）—— 悬停查看详情</div>
+    ${sparkline(null, Object.assign({
+      height:150, yTicks:6, fmtY:v=>fmtKB(v), fmtVal:v=>fmtKB(v),
+      series:[
+        {name:'RSS 常驻', vals:rss, color:'var(--blue)'},
+        {name:'匿名内存', vals:anon, color:'var(--purple)'}
+      ]
+    }, tOpt))}
+
+    <div class="pm-sec">文件描述符 / Socket</div>
+    ${sparkline(null, Object.assign({
+      height:120, yTicks:5, fmtY:v=>v.toFixed(0), fmtVal:v=>v.toFixed(0)+' 个',
+      series:[
+        {name:'文件描述符', vals:fds, color:'var(--cyan)'},
+        {name:'Socket', vals:socks, color:'var(--orange)'}
+      ]
+    }, tOpt))}
+
+    <div class="pm-sec">线程数</div>
+    ${sparkline(null, Object.assign({
+      height:110, yTicks:5, fmtY:v=>v.toFixed(0), fmtVal:v=>v.toFixed(0)+' 个',
+      series:[{name:'线程数', vals:ths, color:'var(--green)'}]
+    }, tOpt))}
+  `;
+}
+
+// ============ 告警 Tab ============
+async function loadAlerts() {
+  const box = document.getElementById('alertList');
+  box.innerHTML = '<div class="loading"><div class="spin"></div>加载告警…</div>';
+  try {
+    const d = await api('/api/alerts');
+    const onlyCrit = document.getElementById('alertOnlyCrit').checked;
+    let list = d.alerts || [];
+    if (onlyCrit) list = list.filter(a => a.level === 'critical');
+
+    document.getElementById('alertMeta').textContent =
+      `严重 ${d.critical||0} · 警告 ${d.warn||0}` +
+      (d.info ? ` · 观察 ${d.info}` : '') +
+      (d.reliable ? '' : ` · 数据累积中 (${d.samples||0}/${d.min_samples||20})`);
+
+    const badge = document.getElementById('alertBadge');
+    const n = (d.critical || 0);
+    if (n > 0) { badge.textContent = n; badge.style.display = ''; }
+    else badge.style.display = 'none';
+
+    if (!list.length) {
+      box.innerHTML = `<div class="empty"><div class="ic">✅</div>
+        <div>${onlyCrit ? '无严重告警' : '当前无告警'}</div>
+        ${d.reliable ? '' : `<div class="hint">已采集 ${d.samples||0}/${d.min_samples||20} 个样本，达到后开始判定</div>`}</div>`;
+      return;
+    }
+    box.innerHTML = list.map(a => {
+      const lv = a.level === 'critical' ? 'crit' : a.level === 'warn' ? 'warn' : 'info';
+      const ico = a.level === 'critical' ? '🔴' : a.level === 'warn' ? '🟡' : '🔵';
+      const side = a.level === 'critical' ? '严重' : a.level === 'warn' ? '警告' : '观察';
+      // 进程级告警可点，跳转到进程详情；系统级告警（无 pid）不可点
+      const attrs = a.pid
+        ? ` clickable" data-pid="${a.pid}" data-name="${esc(a.name)}" title="点击查看该进程详情"`
+        : '"';
+      return `
+      <div class="alert-item ${lv}${attrs}>
+        <div class="ai-main">
+          <div class="ai-name">${ico} ${esc(a.name)}
+            ${a.pid ? `<span style="color:var(--mute);font-weight:400">(PID ${a.pid})</span>` : ''}
+            ${a.score ? `<span class="badge b-type" style="margin-left:6px">评分 ${a.score}</span>` : ''}
+          </div>
+          <div class="ai-msg">${esc(a.msg)}</div>
+        </div>
+        <div class="ai-side">${side}${a.pid ? '<div class="go">查看进程 ›</div>' : ''}</div>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    box.innerHTML = `<div class="empty"><div class="ic">⚠️</div><div>加载失败</div><div class="hint">${esc(e.message)}</div></div>`;
+  }
+}
+
+// ============ 设置 Tab ============
+async function loadSettings(silent) {
+  if (!silent) {
+    try {
+      const c = await api('/api/config');
+      document.getElementById('cfgInterval').value = c.interval;
+      document.getElementById('cfgRetention').value = c.retention_hours || 168;
+      document.getElementById('cfgMax').value = c.max_samples;
+      document.getElementById('cfgAutoStart').checked = c.auto_start === true;
+      document.getElementById('cfgAlerts').checked = c.alerts_enabled !== false;
+      document.getElementById('cfgWarn').value = c.thresholds.rss_slope_warn;
+      document.getElementById('cfgCrit').value = c.thresholds.rss_slope_critical;
+    } catch(e) { toast('读取配置失败','err'); }
+  }
+
+  // 数据状态（每次刷新都更新）
+  try {
+    const st = await api('/api/status');
+    document.getElementById('dataSize').textContent = fmtBytes(st.data_size || 0);
+    document.getElementById('dataSamples').textContent = (st.samples || 0) + ' 个';
+    document.getElementById('dataStart').textContent = st.collector_start || '—';
+    document.getElementById('dataLast').textContent = st.last_sample_time || '—';
+    const scan = st.last_scan_seconds;
+    document.getElementById('dataInterval').textContent = scan
+      ? `${st.config.interval} 秒（设定）+ ${scan} 秒（扫描耗时）≈ ${(st.config.interval + scan).toFixed(1)} 秒`
+      : `${st.config.interval} 秒（设定）`;
+  } catch(e) {}
+  updateRefreshIntervalText();
+}
+
+function fmtBytes(n) {
+  if (!n) return '0 B';
+  const u = ['B','KB','MB','GB'];
+  let i = 0;
+  while (n >= 1024 && i < u.length-1) { n /= 1024; i++; }
+  return n.toFixed(i ? 1 : 0) + ' ' + u[i];
+}
+
 // ============ 事件 ============
 document.getElementById('btnStart').onclick = async () => {
   try { await api('/api/start', {method:'POST'}); toast('已开始采集','ok'); refreshStatus(); }
@@ -537,47 +1862,203 @@ document.getElementById('btnStop').onclick = async () => {
   try { await api('/api/stop', {method:'POST'}); toast('已停止采集'); refreshStatus(); }
   catch(e){ toast('操作失败','err'); }
 };
-document.getElementById('btnRefresh').onclick = () => loadReport();
+document.getElementById('btnRefresh').onclick = () => {
+  loadReport();
+  if (CURRENT_TAB === 'timeline' && TL_PID) loadTimelineTab();
+  if (CURRENT_TAB === 'alerts') loadAlerts();
+  if (CURRENT_TAB === 'settings') loadSettings();
+};
 document.getElementById('btnClear').onclick = async () => {
-  if (!confirm('确定清空所有采集数据？')) return;
-  try { await api('/api/clear', {method:'POST'}); toast('已清空','ok'); refreshStatus(); loadReport(); }
-  catch(e){ toast('操作失败','err'); }
+  if (!confirm('确定清空所有采集数据？此操作不可撤销。')) return;
+  try {
+    await api('/api/clear', {method:'POST'});
+    toast('已清空','ok'); refreshStatus(); loadReport();
+    if (CURRENT_TAB === 'settings') loadSettings();
+  } catch(e){ toast('操作失败','err'); }
 };
-document.getElementById('btnCfg').onclick = async () => {
-  const p = document.getElementById('cfgPanel');
-  if (p.style.display === 'none') {
-    try {
-      const c = await api('/api/config');
-      document.getElementById('cfgInterval').value = c.interval;
-      document.getElementById('cfgMax').value = c.max_samples;
-      document.getElementById('cfgWarn').value = c.thresholds.rss_slope_warn;
-      document.getElementById('cfgCrit').value = c.thresholds.rss_slope_critical;
-      p.style.display = '';
-    } catch(e){ toast('读取配置失败','err'); }
-  } else p.style.display = 'none';
-};
-document.getElementById('btnCfgClose').onclick = () => {
-  document.getElementById('cfgPanel').style.display = 'none';
-};
+
 document.getElementById('btnCfgSave').onclick = async () => {
   try {
     const c = await api('/api/config');
     c.interval = +document.getElementById('cfgInterval').value;
+    c.retention_hours = +document.getElementById('cfgRetention').value;
     c.max_samples = +document.getElementById('cfgMax').value;
+    c.auto_start = document.getElementById('cfgAutoStart').checked;
+    c.alerts_enabled = document.getElementById('cfgAlerts').checked;
     c.thresholds.rss_slope_warn = +document.getElementById('cfgWarn').value;
     c.thresholds.rss_slope_critical = +document.getElementById('cfgCrit').value;
     await api('/api/config', {method:'POST', body: JSON.stringify(c)});
-    toast('配置已保存，下次采集生效','ok');
-    document.getElementById('cfgPanel').style.display = 'none';
+    toast('配置已保存，下次采样生效','ok');
+    refreshStatus();
   } catch(e){ toast('保存失败','err'); }
+};
+document.getElementById('btnCfgReload').onclick = () => loadSettings();
+
+// 自动刷新开关（设置页，默认开启）
+// AUTO_REFRESH 的值已在脚本前部从 localStorage 恢复，这里只做同步显示。
+document.getElementById('cfgAutoRefresh').checked = AUTO_REFRESH;
+document.getElementById('cfgAutoRefresh').onchange = (e) => {
+  AUTO_REFRESH = e.target.checked;
+  try { localStorage.setItem('tos-perfmon-autorefresh', AUTO_REFRESH ? '1' : '0'); } catch(err) {}
+  toast(AUTO_REFRESH ? '已开启自动刷新' : '已暂停自动刷新', AUTO_REFRESH ? 'ok' : '');
+  if (AUTO_REFRESH) { __lastRefresh = 0; mainRefresh(); }
+};
+
+// 显示当前刷新间隔
+function updateRefreshIntervalText() {
+  const el = document.getElementById('dataRefreshInterval');
+  if (el) el.textContent = (refreshIntervalMs()/1000) + ' 秒（随所选时间范围自动调整）';
+}
+
+// 时间范围切换
+document.getElementById('rangeSel').onchange = (e) => {
+  CURRENT_RANGE = e.target.value;
+  __lastRefresh = 0;   // 重置计时，立即按新范围刷新
+  loadReport();
+  if (CURRENT_TAB === 'timeline' && TL_PID) loadTimelineTab();
+  if (CURRENT_TAB === 'settings') loadSettings(true);
+};
+
+// 导出
+document.getElementById('btnQuickExport').onclick = () => {
+  window.open(BASE + '/api/export?kind=system&range=' + encodeURIComponent(CURRENT_RANGE), '_blank');
+  toast('已开始下载系统时间线 CSV','ok');
+};
+document.getElementById('btnExportSys').onclick = () => {
+  window.open(BASE + '/api/export?kind=system&range=' + encodeURIComponent(CURRENT_RANGE), '_blank');
+  toast('已开始下载系统时间线 CSV','ok');
+};
+document.getElementById('btnExportProc').onclick = () => {
+  window.open(BASE + '/api/export?kind=processes&range=' + encodeURIComponent(CURRENT_RANGE), '_blank');
+  toast('已开始下载进程明细 CSV','ok');
+};
+
+// 进程搜索
+document.getElementById('procSearch').oninput = (e) => {
+  PROC_FILTER = e.target.value.trim().toLowerCase();
+  if (window.__lastReport) renderProcTables(window.__lastReport);
+};
+
+// 排序按钮：点当前维度 → 切换升降序；点其他维度 → 切过去（保持当前方向）
+document.getElementById('sortBar').onclick = (e) => {
+  const btn = e.target.closest('button[data-sort]');
+  if (!btn) return;
+  const s = btn.dataset.sort;
+  if (s === PROC_SORT) {
+    PROC_SORT_DESC = !PROC_SORT_DESC;
+  } else {
+    PROC_SORT = s;
+    // 名称默认升序（A→Z）更符合直觉；数值维度默认降序（大的在前）
+    PROC_SORT_DESC = (s !== 'name');
+  }
+  try {
+    localStorage.setItem('tos-perfmon-procsort', PROC_SORT);
+    localStorage.setItem('tos-perfmon-procsortdesc', PROC_SORT_DESC ? '1' : '0');
+  } catch (err) {}
+  if (window.__lastReport) renderProcTables(window.__lastReport);
+};
+
+// 时间线 Tab
+document.getElementById('tlRefresh').onclick = () => { TL_LOADED = false; fillProcSelect(); };
+document.getElementById('tlProcSel').onchange = () => loadTimelineTab();
+
+// 告警 Tab
+document.getElementById('alertRefresh').onclick = () => loadAlerts();
+document.getElementById('alertOnlyCrit').onchange = () => loadAlerts();
+
+// 告警条点击 → 跳转到进程详情（仅对带 pid 的进程级告警生效）
+document.getElementById('alertBar').onclick = (e) => {
+  const el = e.target.closest('.alert.clickable');
+  if (!el || !el.dataset.pid) return;
+  gotoProcFromAlert(+el.dataset.pid, el.dataset.name || '');
+};
+
+// 告警 Tab 列表点击 → 同上
+document.getElementById('alertList').onclick = (e) => {
+  const el = e.target.closest('.alert-item.clickable');
+  if (!el || !el.dataset.pid) return;
+  gotoProcFromAlert(+el.dataset.pid, el.dataset.name || '');
+};
+
+// 弹窗
+document.getElementById('pmClose').onclick = () => {
+  document.getElementById('procModal').style.display = 'none';
+};
+document.getElementById('procModal').onclick = (e) => {
+  if (e.target.id === 'procModal') e.currentTarget.style.display = 'none';
+};
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') document.getElementById('procModal').style.display = 'none';
+});
+document.getElementById('pmRange').onchange = () => loadProcTimeline();
+document.getElementById('pmExport').onclick = () => {
+  if (!PM_PID) return;
+  window.open(BASE + '/api/export?kind=process&pid=' + PM_PID +
+              '&range=' + encodeURIComponent(document.getElementById('pmRange').value), '_blank');
+  toast('已开始下载进程 CSV','ok');
 };
 
 // ============ 初始化 ============
 (async function init() {
+  document.getElementById('rangeSel').value = CURRENT_RANGE;
+  let saved = 'overview';
+  try { saved = localStorage.getItem('tos-perfmon-tab') || 'overview'; } catch(e) {}
+  if (!document.getElementById('pane-' + saved)) saved = 'overview';
+  switchTab(saved);
+
   await refreshStatus();
   await loadReport();
-  setInterval(refreshStatus, 5000);
+  loadAlerts();
+
+  // 状态栏高频刷新（5 秒），开关关闭时跳过
+  setInterval(() => { if (AUTO_REFRESH) refreshStatus(); }, 5000);
+
+  // 主刷新循环：默认开启，间隔随时间范围自适应
+  setInterval(mainRefresh, 5000);
 })();
+
+// ============ 自动刷新 ============
+// AUTO_REFRESH / __lastRefresh 的声明已提到脚本前部，此处不再重复声明。
+
+// 刷新间隔随时间范围自适应：
+//   数据变化快的窗口刷新更勤，长窗口省资源
+function refreshIntervalMs() {
+  switch (CURRENT_RANGE) {
+    case '10m': case '30m': return 10000;   // 10 秒
+    case '1h':  case '3h':  case '6h':  return 30000;   // 30 秒
+    default: return 60000;                  // 长窗口 60 秒
+  }
+}
+
+function mainRefresh() {
+  if (!AUTO_REFRESH) return;
+  const now = Date.now();
+  if (now - __lastRefresh < refreshIntervalMs()) return;
+  __lastRefresh = now;
+
+  // 概览 / 进程 数据
+  loadReport();
+
+  // 告警 Tab
+  if (CURRENT_TAB === 'alerts') loadAlerts();
+
+  // 时间线 Tab：保持选中进程与滚动位置
+  if (CURRENT_TAB === 'timeline' && TL_PID) loadTimelineTab(true);
+
+  // 进程详情弹窗：同步刷新，不打断查看
+  if (document.getElementById('procModal').style.display === 'flex' && PM_PID) {
+    loadProcTimeline(true);
+  }
+
+  // 进程 Tab 右侧详情面板：同步刷新
+  if (CURRENT_TAB === 'procs' && PM_PID
+      && document.getElementById('pdContent').style.display !== 'none') {
+    loadProcDetail(true);
+  }
+
+  // 设置页的数据统计
+  if (CURRENT_TAB === 'settings') loadSettings(true);
+}
 </script>
 </body>
 </html>
